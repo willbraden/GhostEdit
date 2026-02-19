@@ -1,0 +1,135 @@
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  background: #252525;
+  border-bottom: 1px solid #333;
+  padding: 0 12px;
+  flex-shrink: 0;
+  gap: 12px;
+}
+
+.left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 200px;
+}
+
+.logo {
+  font-size: 16px;
+  font-weight: 800;
+  color: #4f8ef7;
+  letter-spacing: 1px;
+}
+
+.projectName {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #e0e0e0;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  width: 180px;
+  transition: border-color 0.15s;
+}
+
+.projectName:hover {
+  border-color: #444;
+}
+
+.projectName:focus {
+  border-color: #4f8ef7;
+  background: #1a1a1a;
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.playBtn {
+  background: #4f8ef7;
+  color: white;
+  border-radius: 50%;
+  width: 34px;
+  height: 34px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.playBtn:hover {
+  background: #3a7de0;
+}
+
+.iconBtn {
+  background: #333;
+  color: #ccc;
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.iconBtn:hover {
+  background: #444;
+  color: #fff;
+}
+
+.timeDisplay {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  color: #aaa;
+  min-width: 60px;
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.aspectGroup {
+  display: flex;
+  background: #1a1a1a;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid #333;
+}
+
+.aspectBtn {
+  background: transparent;
+  color: #888;
+  padding: 4px 10px;
+  font-size: 12px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.aspectBtn:hover {
+  background: #333;
+  color: #ccc;
+}
+
+.aspectBtn.active {
+  background: #4f8ef7;
+  color: white;
+}
+
+.exportBtn {
+  background: #4f8ef7;
+  color: white;
+  border-radius: 6px;
+  padding: 6px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+
+.exportBtn:hover {
+  background: #3a7de0;
+}
