@@ -1,6 +1,6 @@
-import React, { useRef, useCallback, useEffect } from 'react'
+import React, { useRef, useCallback, useEffect, useState } from 'react'
 import { useProjectStore } from '../../store/project'
-import type { Clip, Asset } from '../../types/project'
+import type { Clip, Asset, Caption } from '../../types/project'
 import styles from './Timeline.module.css'
 
 const TRACK_HEIGHT = 56
@@ -125,9 +125,98 @@ function ClipBlock({
   )
 }
 
+interface CaptionBlockProps {
+  caption: Caption
+  zoom: number
+  isSelected: boolean
+  onSelect: (id: string) => void
+  onDragMove: (captionId: string, newStart: number, newEnd: number) => void
+  onTrimLeft: (captionId: string, newStart: number) => void
+  onTrimRight: (captionId: string, newEnd: number) => void
+  onDragEnd: () => void
+}
+
+function CaptionBlock({ caption, zoom, isSelected, onSelect, onDragMove, onTrimLeft, onTrimRight, onDragEnd }: CaptionBlockProps) {
+  const left = caption.startTime * zoom
+  const width = Math.max((caption.endTime - caption.startTime) * zoom, 20)
+  const dragRef = useRef<{ startX: number; startTime: number; endTime: number } | null>(null)
+
+  const handleMouseDownMove = (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    onSelect(caption.id)
+    dragRef.current = { startX: e.clientX, startTime: caption.startTime, endTime: caption.endTime }
+
+    const onMove = (me: MouseEvent): void => {
+      if (!dragRef.current) return
+      const delta = (me.clientX - dragRef.current.startX) / zoom
+      const dur = dragRef.current.endTime - dragRef.current.startTime
+      const newStart = Math.max(0, dragRef.current.startTime + delta)
+      onDragMove(caption.id, newStart, newStart + dur)
+    }
+    const onUp = (): void => {
+      dragRef.current = null
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      onDragEnd()
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  const makeTrimHandler = (side: 'left' | 'right') => (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    const startX = e.clientX
+    const captureStart = caption.startTime
+    const captureEnd = caption.endTime
+
+    const onMove = (me: MouseEvent): void => {
+      const delta = (me.clientX - startX) / zoom
+      if (side === 'left') {
+        const newStart = Math.max(0, captureStart + delta)
+        if (newStart < captureEnd - 0.1) onTrimLeft(caption.id, newStart)
+      } else {
+        const newEnd = Math.max(captureStart + 0.1, captureEnd + delta)
+        onTrimRight(caption.id, newEnd)
+      }
+    }
+    const onUp = (): void => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      onDragEnd()
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  return (
+    <div
+      className={`${styles.captionBlock} ${isSelected ? styles.captionBlockSelected : ''}`}
+      style={{ left, width }}
+      onMouseDown={handleMouseDownMove}
+    >
+      <div className={styles.clipTrimHandle} onMouseDown={makeTrimHandler('left')} />
+      <div className={styles.captionBlockLabel}>{caption.text}</div>
+      <div
+        className={`${styles.clipTrimHandle} ${styles.clipTrimRight}`}
+        onMouseDown={makeTrimHandler('right')}
+      />
+    </div>
+  )
+}
+
 export function Timeline() {
-  const { project, zoom, setZoom, currentTime, setCurrentTime, isPlaying, addClip, updateClip, removeClip, selectClip, selectedClipId } =
+  const { project, zoom, setZoom, currentTime, setCurrentTime, isPlaying, addClip, addCaptions, updateClip, removeClip, selectClip, selectedClipId, updateCaption, removeCaption, selectCaption, selectedCaptionId, deoverlapCaptions } =
     useProjectStore()
+
+  const [captionMenu, setCaptionMenu] = useState<{ x: number; y: number; time: number } | null>(null)
+
+  // Close context menu on any outside click
+  useEffect(() => {
+    if (!captionMenu) return
+    const close = (): void => setCaptionMenu(null)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [captionMenu])
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const playheadAnimRef = useRef<number | null>(null)
@@ -169,20 +258,20 @@ export function Timeline() {
         s.setIsPlaying(!s.isPlaying)
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
         const s = useProjectStore.getState()
-        if (s.selectedClipId && !(e.target instanceof HTMLInputElement)) {
-          removeClip(s.selectedClipId)
-        }
+        if (s.selectedClipId) removeClip(s.selectedClipId)
+        else if (s.selectedCaptionId) removeCaption(s.selectedCaptionId)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [removeClip])
+  }, [removeClip, removeCaption])
 
   const handleRulerClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       const rect = e.currentTarget.getBoundingClientRect()
-      const x = e.clientX - rect.left + (scrollRef.current?.scrollLeft ?? 0)
+      const x = e.clientX - rect.left
       setCurrentTime(Math.max(0, x / zoom))
     },
     [zoom, setCurrentTime]
@@ -232,6 +321,45 @@ export function Timeline() {
     [project.tracks, project.assets, updateClip]
   )
 
+  const handleCaptionDragMove = useCallback(
+    (captionId: string, newStart: number, newEnd: number) => {
+      updateCaption(captionId, { startTime: newStart, endTime: newEnd })
+    },
+    [updateCaption]
+  )
+
+  const handleCaptionTrimLeft = useCallback(
+    (captionId: string, newStart: number) => {
+      updateCaption(captionId, { startTime: newStart })
+    },
+    [updateCaption]
+  )
+
+  const handleCaptionTrimRight = useCallback(
+    (captionId: string, newEnd: number) => {
+      updateCaption(captionId, { endTime: newEnd })
+    },
+    [updateCaption]
+  )
+
+  const handleCaptionTrackContextMenu = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    setCaptionMenu({ x: e.clientX, y: e.clientY, time: Math.max(0, x / zoom) })
+  }
+
+  const insertBlankCaption = (): void => {
+    if (!captionMenu) return
+    addCaptions([{
+      text: '',
+      startTime: captionMenu.time,
+      endTime: captionMenu.time + 2,
+      style: { fontSize: 32, color: '#ffffff', background: 'rgba(0,0,0,0.5)', bold: false, positionY: 85 },
+    }])
+    setCaptionMenu(null)
+  }
+
   // Drop asset onto track
   const handleDropOnTrack = useCallback(
     (e: React.DragEvent, trackId: string) => {
@@ -242,7 +370,7 @@ export function Timeline() {
       if (!asset) return
 
       const rect = e.currentTarget.getBoundingClientRect()
-      const x = e.clientX - rect.left + (scrollRef.current?.scrollLeft ?? 0)
+      const x = e.clientX - rect.left
       const dropTime = Math.max(0, x / zoom)
       const dur = asset.duration || 5
 
@@ -285,6 +413,10 @@ export function Timeline() {
             <span className={styles.trackLabelName}>{track.name}</span>
           </div>
         ))}
+        <div className={`${styles.trackLabel} ${styles.captionTrackLabel}`}>
+          <span className={styles.trackLabelType}>T</span>
+          <span className={styles.trackLabelName}>Captions</span>
+        </div>
       </div>
 
       {/* Scrollable track area */}
@@ -324,14 +456,70 @@ export function Timeline() {
               })}
             </div>
           ))}
+          {/* Captions track */}
+          <div
+            className={`${styles.track} ${styles.captionTrack}`}
+            onClick={() => selectCaption(null)}
+            onContextMenu={handleCaptionTrackContextMenu}
+          >
+            {project.captions.map((caption) => (
+              <CaptionBlock
+                key={caption.id}
+                caption={caption}
+                zoom={zoom}
+                isSelected={selectedCaptionId === caption.id}
+                onSelect={selectCaption}
+                onDragMove={handleCaptionDragMove}
+                onTrimLeft={handleCaptionTrimLeft}
+                onTrimRight={handleCaptionTrimRight}
+                onDragEnd={deoverlapCaptions}
+              />
+            ))}
+          </div>
         </div>
 
         {/* Playhead */}
         <div
           className={styles.playhead}
-          style={{ left: playheadX, height: RULER_HEIGHT + project.tracks.length * TRACK_HEIGHT }}
+          style={{ left: playheadX, height: RULER_HEIGHT + (project.tracks.length + 1) * TRACK_HEIGHT }}
         />
       </div>
+
+      {/* Caption insert context menu */}
+      {captionMenu && (
+        <div
+          style={{
+            position: 'fixed',
+            top: captionMenu.y,
+            left: captionMenu.x,
+            zIndex: 1000,
+            background: '#2a2a2a',
+            border: '1px solid #444',
+            borderRadius: 4,
+            padding: '4px 0',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            style={{
+              display: 'block',
+              width: '100%',
+              padding: '6px 14px',
+              background: 'none',
+              border: 'none',
+              color: '#eee',
+              cursor: 'pointer',
+              fontSize: 12,
+              textAlign: 'left',
+              whiteSpace: 'nowrap',
+            }}
+            onClick={insertBlankCaption}
+          >
+            Insert caption
+          </button>
+        </div>
+      )}
     </div>
   )
 }

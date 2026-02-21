@@ -172,3 +172,56 @@
   pointer-events: none;
   z-index: 20;
 }
+
+/* Caption track */
+
+.captionTrackLabel {
+  color: #7ab87a;
+}
+
+.captionTrack {
+  background: #1a1f1a;
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 99px,
+    #1e261e 99px,
+    #1e261e 100px
+  );
+}
+
+.captionTrack:hover {
+  background-color: #1d231d;
+}
+
+.captionBlock {
+  position: absolute;
+  top: 4px;
+  height: calc(100% - 8px);
+  background: #2a5a3a;
+  border: 1px solid #3a8a5a;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  min-width: 20px;
+}
+
+.captionBlockSelected {
+  border-color: #4fdf8f;
+  box-shadow: 0 0 0 1px #4fdf8f;
+}
+
+.captionBlockLabel {
+  position: relative;
+  z-index: 1;
+  padding: 0 24px 0 8px;
+  font-size: 10px;
+  color: #aedcba;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  flex: 1;
+}

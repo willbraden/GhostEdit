@@ -53,6 +53,7 @@ interface ProjectStore {
   updateCaption: (captionId: string, updates: Partial<Caption>) => void
   removeCaption: (captionId: string) => void
   selectCaption: (captionId: string | null) => void
+  deoverlapCaptions: () => void
 
   // Playback
   setCurrentTime: (time: number) => void
@@ -63,6 +64,16 @@ interface ProjectStore {
 
   // Computed
   totalDuration: () => number
+}
+
+function deoverlapArr(captions: Caption[]): Caption[] {
+  const sorted = [...captions].sort((a, b) => a.startTime - b.startTime)
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].startTime < sorted[i - 1].endTime) {
+      sorted[i - 1] = { ...sorted[i - 1], endTime: sorted[i].startTime }
+    }
+  }
+  return sorted
 }
 
 export const useProjectStore = create<ProjectStore>((set, get) => ({
@@ -161,10 +172,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       project: {
         ...s.project,
-        captions: [
+        captions: deoverlapArr([
           ...s.project.captions,
           ...captions.map((c) => ({ ...c, id: uuid() })),
-        ],
+        ]),
       },
     })),
 
@@ -188,6 +199,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     })),
 
   selectCaption: (captionId) => set({ selectedCaptionId: captionId }),
+
+  deoverlapCaptions: () =>
+    set((s) => ({
+      project: { ...s.project, captions: deoverlapArr(s.project.captions) },
+    })),
 
   setCurrentTime: (currentTime) => set({ currentTime }),
 

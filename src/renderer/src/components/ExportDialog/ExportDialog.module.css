@@ -125,6 +125,16 @@
   color: #888;
 }
 
+.checkLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #ccc;
+  cursor: pointer;
+  user-select: none;
+}
+
 .progressBar {
   height: 24px;
   background: #1a1a1a;

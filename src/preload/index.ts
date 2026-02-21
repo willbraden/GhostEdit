@@ -26,6 +26,9 @@ const api = {
     ipcRenderer.on(IPC.WHISPER_PROGRESS, listener)
     return () => ipcRenderer.off(IPC.WHISPER_PROGRESS, listener)
   },
+
+  // Fonts
+  downloadFont: (familyName: string) => ipcRenderer.invoke(IPC.FONTS_DOWNLOAD, familyName),
 }
 
 if (process.contextIsolated) {

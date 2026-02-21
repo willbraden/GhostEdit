@@ -40,7 +40,10 @@ function drawCaptions(
   for (const caption of captions) {
     const fontSize = caption.style.fontSize || 32
     const bold = caption.style.bold ? 'bold ' : ''
-    ctx.font = `${bold}${fontSize}px sans-serif`
+    const family = caption.style.fontFamily
+      ? `"${caption.style.fontFamily}", Arial, sans-serif`
+      : 'Arial, sans-serif'
+    ctx.font = `${bold}${fontSize}px ${family}`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
 
@@ -60,6 +63,15 @@ function drawCaptions(
         6
       )
       ctx.fill()
+    }
+
+    // Stroke / outline
+    const strokeWidth = caption.style.strokeWidth || 0
+    if (strokeWidth > 0) {
+      ctx.lineWidth = strokeWidth * 2
+      ctx.lineJoin = 'round'
+      ctx.strokeStyle = caption.style.strokeColor || '#000000'
+      ctx.strokeText(caption.text, width / 2, y)
     }
 
     ctx.fillStyle = caption.style.color || 'white'
@@ -242,7 +254,7 @@ export function Preview() {
         <canvas
           ref={canvasRef}
           className={styles.captionCanvas}
-          width={1920}
+          width={project.aspectRatio === '16:9' ? 1920 : 1080}
           height={project.aspectRatio === '16:9' ? 1080 : 1920}
         />
         {!activeClip && (

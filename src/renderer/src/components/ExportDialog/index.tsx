@@ -31,6 +31,7 @@ export function ExportDialog({ onClose }: Props) {
   const [resIdx, setResIdx] = useState(0)
   const [crf, setCrf] = useState(23)
   const [fps, setFps] = useState<30 | 60>(project.fps)
+  const [muteVideoAudio, setMuteVideoAudio] = useState(false)
 
   useEffect(() => {
     const unsub = window.api.onExportProgress((p) => setProgress(p))
@@ -65,6 +66,21 @@ export function ExportDialog({ onClose }: Props) {
           }
         })
 
+      // Gather audio track clips
+      const audioClips = project.tracks
+        .filter((t) => t.type === 'audio')
+        .flatMap((t) => t.clips)
+        .map((clip) => {
+          const asset = project.assets.find((a) => a.id === clip.assetId)!
+          return {
+            filePath: asset.filePath,
+            sourceStart: clip.sourceStart,
+            sourceEnd: clip.sourceEnd,
+            timelineStart: clip.timelineStart,
+            timelineEnd: clip.timelineEnd,
+          }
+        })
+
       const captions = project.captions.map((c) => ({
         text: c.text,
         startTime: c.startTime,
@@ -74,10 +90,15 @@ export function ExportDialog({ onClose }: Props) {
         background: c.style.background,
         bold: c.style.bold,
         positionY: c.style.positionY,
+        fontFamily: c.style.fontFamily,
+        strokeWidth: c.style.strokeWidth,
+        strokeColor: c.style.strokeColor,
       }))
 
       await window.api.exportVideo({
         clips,
+        audioClips,
+        muteVideoAudio,
         captions,
         outputPath,
         width: res.width,
@@ -153,6 +174,18 @@ export function ExportDialog({ onClose }: Props) {
             <span className={styles.crfLabel}>
               {crf} — {crf <= 18 ? 'High' : crf <= 24 ? 'Medium' : 'Low'}
             </span>
+          </div>
+
+          <div className={styles.field}>
+            <label>Video Audio</label>
+            <label className={styles.checkLabel}>
+              <input
+                type="checkbox"
+                checked={muteVideoAudio}
+                onChange={(e) => setMuteVideoAudio(e.target.checked)}
+              />
+              Mute
+            </label>
           </div>
 
           {exporting && (

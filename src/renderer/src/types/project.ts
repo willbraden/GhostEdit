@@ -8,7 +8,10 @@ export interface CaptionStyle {
   color: string
   background: string
   bold: boolean
-  positionY: number // 0-100 percent from top
+  positionY: number   // 0-100 percent from top
+  fontFamily?: string  // Google Font family name; undefined = system Arial
+  strokeWidth?: number // text outline width in px (0 = none)
+  strokeColor?: string // text outline color hex
 }
 
 export interface Caption {
@@ -93,4 +96,7 @@ export const IPC = {
   // Whisper
   WHISPER_TRANSCRIBE: 'whisper:transcribe',
   WHISPER_PROGRESS: 'whisper:progress',
+
+  // Fonts
+  FONTS_DOWNLOAD: 'fonts:download',
 } as const
