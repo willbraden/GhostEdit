@@ -19,55 +19,61 @@ export interface TranscriptionResult {
   text: string
 }
 
-// nodejs-whisper expects an audio file and returns segments with timestamps
-async function transcribeWithNodeWhisper(
-  audioPath: string,
-  modelName: string,
-  onProgress?: (msg: string) => void
-): Promise<TranscriptionResult> {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { nodewhisper } = require('nodejs-whisper')
+// Cache the pipeline across calls so the model isn't reloaded each time
+let _pipeline: unknown = null
 
-  onProgress?.('Running Whisper transcription...')
+async function getWhisperPipeline(onProgress?: (msg: string) => void): Promise<unknown> {
+  if (_pipeline) return _pipeline
 
-  const result = await nodewhisper(audioPath, {
-    modelName,
-    autoDownloadModelName: modelName,
-    removeWavFileAfterTranscription: false,
-    withCuda: false,
-    whisperOptions: {
-      outputInJson: true,
-      word_timestamps: true,
-      language: 'auto',
+  onProgress?.('Loading Whisper model (first use downloads ~244MB)...')
+
+  // @xenova/transformers is ESM — use dynamic import from CJS main process
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { pipeline, env } = await (import('@xenova/transformers') as any)
+
+  // Single thread is most compatible in Electron main process
+  env.backends.onnx.wasm.numThreads = 1
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  _pipeline = await (pipeline as any)('automatic-speech-recognition', 'Xenova/whisper-small.en', {
+    quantized: true,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    progress_callback: (info: any) => {
+      if (info.status === 'downloading' && info.total > 0) {
+        const pct = Math.round((info.loaded / info.total) * 100)
+        onProgress?.(`Downloading model: ${pct}%`)
+      } else if (info.status === 'loading') {
+        onProgress?.('Loading model into memory...')
+      }
     },
   })
 
-  // nodejs-whisper returns array of segments
-  const words: TranscriptionWord[] = []
-  let fullText = ''
+  return _pipeline
+}
 
-  if (Array.isArray(result)) {
-    for (const segment of result) {
-      if (segment.tokens) {
-        for (const token of segment.tokens) {
-          if (token.text && token.text.trim()) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const tok = token as any
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const seg = segment as any
-            words.push({
-              word: token.text.trim(),
-              start: (tok.offsets?.from ?? seg.offsets?.from ?? 0) / 1000,
-              end: (tok.offsets?.to ?? seg.offsets?.to ?? 0) / 1000,
-            })
-          }
-        }
-      }
-      if (segment.speech) fullText += segment.speech + ' '
+// Parse a 16kHz mono PCM WAV file into a Float32Array of normalized samples.
+// Scans for the "data" chunk header to handle any WAV header size.
+function readWavAsFloat32(wavPath: string): Float32Array {
+  const buf = fs.readFileSync(wavPath)
+
+  // Find "data" marker
+  let dataOffset = 12
+  while (dataOffset < buf.length - 8) {
+    const marker = buf.toString('ascii', dataOffset, dataOffset + 4)
+    const chunkSize = buf.readUInt32LE(dataOffset + 4)
+    if (marker === 'data') {
+      dataOffset += 8
+      break
     }
+    dataOffset += 8 + chunkSize
   }
 
-  return { words, text: fullText.trim() }
+  const sampleCount = (buf.length - dataOffset) / 2
+  const samples = new Float32Array(sampleCount)
+  for (let i = 0; i < sampleCount; i++) {
+    samples[i] = buf.readInt16LE(dataOffset + i * 2) / 32768.0
+  }
+  return samples
 }
 
 export async function transcribeAudio(
@@ -79,22 +85,81 @@ export async function transcribeAudio(
 
   onProgress?.('Extracting audio...')
 
-  // Convert to 16kHz mono WAV (required by Whisper)
+  // Convert to 16kHz mono WAV with loudness normalization (required by Whisper)
   await execFileAsync(ffmpegPath, [
     '-i', inputPath,
     '-ar', '16000',
     '-ac', '1',
+    '-af', 'loudnorm',
     '-c:a', 'pcm_s16le',
     '-y',
     audioPath,
-  ])
+  ]).catch((e: Error) => {
+    throw new Error(`Audio extraction failed: ${e.message}`)
+  })
 
-  onProgress?.('Loading Whisper model (downloading if first use)...')
+  onProgress?.('Running Whisper transcription...')
 
   try {
-    const result = await transcribeWithNodeWhisper(audioPath, 'base.en', onProgress)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const transcriber = (await getWhisperPipeline(onProgress)) as any
+
+    // AudioContext is not available in Node.js — read WAV bytes and convert to Float32Array
+    const audioData = readWavAsFloat32(audioPath)
+    const wavStat = fs.statSync(audioPath)
+    const maxAmp = audioData.reduce((m, v) => Math.max(m, Math.abs(v)), 0)
+    console.log(`[whisper] WAV: ${wavStat.size} bytes, ${audioData.length} samples, max amplitude: ${maxAmp.toFixed(4)}`)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result: any = await transcriber(audioData, {
+      sampling_rate: 16000,
+      return_timestamps: 'word',
+      chunk_length_s: 30,
+      stride_length_s: 5,
+    })
+
+    console.log('[whisper] raw result text:', result.text)
+
+    // Filter out Whisper special tokens and hallucinations
+    const SPECIAL_TOKEN = /^\[.*\]$/ // [BLANK_AUDIO], [MUSIC], etc.
+
+    const words: TranscriptionWord[] = []
+    if (result.chunks && Array.isArray(result.chunks)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const chunk of result.chunks as any[]) {
+        const text = (chunk.text as string)?.trim()
+        // Skip empty, special tokens, and hallucinations (no alphabetic characters)
+        if (!text || SPECIAL_TOKEN.test(text) || !/[a-zA-Z]/.test(text)) continue
+        words.push({
+          word: text,
+          start: (chunk.timestamp as number[])?.[0] ?? 0,
+          end: (chunk.timestamp as number[])?.[1] ?? (chunk.timestamp as number[])?.[0] ?? 0,
+        })
+      }
+    }
+
+    // Deduplicate words from chunk overlap regions.
+    // When chunks overlap, the same word near the boundary gets transcribed twice
+    // with slightly different timestamps, causing rapid-fire or doubled captions.
+    const deduped: TranscriptionWord[] = []
+    for (const word of words) {
+      const last = deduped[deduped.length - 1]
+      if (
+        last &&
+        last.word.toLowerCase() === word.word.toLowerCase() &&
+        Math.abs(word.start - last.start) < 0.5
+      ) {
+        // Keep whichever has the longer/more defined duration
+        if ((word.end - word.start) > (last.end - last.start)) {
+          deduped[deduped.length - 1] = word
+        }
+        continue
+      }
+      deduped.push(word)
+    }
+
     fs.unlink(audioPath, () => {})
-    return result
+    return { words: deduped, text: (result.text as string) || '' }
   } catch (err) {
     fs.unlink(audioPath, () => {})
     throw err
