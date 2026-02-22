@@ -22,8 +22,8 @@
 }
 
 .timelineArea {
-  height: 220px;
-  min-height: 160px;
+  height: 332px;
+  min-height: 332px;
   flex-shrink: 0;
   overflow: hidden;
 }

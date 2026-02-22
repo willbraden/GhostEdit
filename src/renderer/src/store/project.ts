@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Project, Asset, Track, Clip, Caption, AspectRatio, Fps } from '../types/project'
+import type { Project, Asset, Track, Clip, Caption, Effect, AspectRatio, Fps } from '../types/project'
 
 function uuid(): string {
   return crypto.randomUUID()
@@ -17,16 +17,17 @@ function defaultProject(): Project {
     ],
     assets: [],
     captions: [],
+    effects: [],
   }
 }
 
 interface ProjectStore {
   project: Project
-  selectedClipId: string | null
-  selectedCaptionId: string | null
-  currentTime: number      // playhead position in seconds
+  selectedIds: string[]        // multi-select: clip IDs + caption IDs combined
+  selectedCaptionId: string | null  // kept for CaptionEditor panel
+  currentTime: number
   isPlaying: boolean
-  zoom: number             // pixels per second on timeline
+  zoom: number
 
   // Project
   setProjectName: (name: string) => void
@@ -46,18 +47,32 @@ interface ProjectStore {
   addClip: (trackId: string, clip: Omit<Clip, 'trackId'>) => void
   updateClip: (clipId: string, updates: Partial<Clip>) => void
   removeClip: (clipId: string) => void
+  moveClipToTrack: (clipId: string, newTrackId: string) => void
   selectClip: (clipId: string | null) => void
 
   // Captions
   addCaptions: (captions: Omit<Caption, 'id'>[]) => void
   updateCaption: (captionId: string, updates: Partial<Caption>) => void
   removeCaption: (captionId: string) => void
+  clearCaptions: () => void
   selectCaption: (captionId: string | null) => void
   deoverlapCaptions: () => void
 
+  // Effects
+  selectedEffectId: string | null
+  addEffect: (effect: Omit<Effect, 'id'>) => void
+  removeEffect: (effectId: string) => void
+  updateEffect: (effectId: string, updates: Partial<Omit<Effect, 'id'>>) => void
+  selectEffect: (effectId: string | null) => void
+
+  // Multi-select
+  setSelectedIds: (ids: string[]) => void
+
   // Playback
+  playbackAnchor: { wallTime: number; projectTime: number } | null
   setCurrentTime: (time: number) => void
   setIsPlaying: (playing: boolean) => void
+  setPlaybackAnchor: (anchor: { wallTime: number; projectTime: number } | null) => void
 
   // Timeline
   setZoom: (zoom: number) => void
@@ -78,11 +93,13 @@ function deoverlapArr(captions: Caption[]): Caption[] {
 
 export const useProjectStore = create<ProjectStore>((set, get) => ({
   project: defaultProject(),
-  selectedClipId: null,
+  selectedIds: [],
   selectedCaptionId: null,
+  selectedEffectId: null,
   currentTime: 0,
   isPlaying: false,
-  zoom: 100, // 100px per second default
+  playbackAnchor: null,
+  zoom: 100,
 
   setProjectName: (name) =>
     set((s) => ({ project: { ...s.project, name } })),
@@ -94,7 +111,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({ project: { ...s.project, fps } })),
 
   loadProject: (project) =>
-    set({ project, selectedClipId: null, selectedCaptionId: null, currentTime: 0 }),
+    set({ project: { effects: [], ...project }, selectedIds: [], selectedCaptionId: null, selectedEffectId: null, currentTime: 0 }),
 
   addAsset: (asset) =>
     set((s) => ({ project: { ...s.project, assets: [...s.project.assets, asset] } })),
@@ -156,7 +173,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   removeClip: (clipId) =>
     set((s) => ({
-      selectedClipId: s.selectedClipId === clipId ? null : s.selectedClipId,
+      selectedIds: s.selectedIds.filter((id) => id !== clipId),
       project: {
         ...s.project,
         tracks: s.project.tracks.map((t) => ({
@@ -166,7 +183,27 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       },
     })),
 
-  selectClip: (clipId) => set({ selectedClipId: clipId }),
+  moveClipToTrack: (clipId, newTrackId) =>
+    set((s) => {
+      let moved: Clip | undefined
+      const stripped = s.project.tracks.map((t) => {
+        const clip = t.clips.find((c) => c.id === clipId)
+        if (clip) moved = { ...clip, trackId: newTrackId }
+        return { ...t, clips: t.clips.filter((c) => c.id !== clipId) }
+      })
+      if (!moved) return {}
+      return {
+        project: {
+          ...s.project,
+          tracks: stripped.map((t) =>
+            t.id === newTrackId ? { ...t, clips: [...t.clips, moved!] } : t
+          ),
+        },
+      }
+    }),
+
+  selectClip: (clipId) =>
+    set({ selectedIds: clipId ? [clipId] : [], selectedCaptionId: null }),
 
   addCaptions: (captions) =>
     set((s) => ({
@@ -191,6 +228,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   removeCaption: (captionId) =>
     set((s) => ({
+      selectedIds: s.selectedIds.filter((id) => id !== captionId),
       selectedCaptionId: s.selectedCaptionId === captionId ? null : s.selectedCaptionId,
       project: {
         ...s.project,
@@ -198,16 +236,54 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       },
     })),
 
-  selectCaption: (captionId) => set({ selectedCaptionId: captionId }),
+  clearCaptions: () =>
+    set((s) => ({
+      selectedIds: s.selectedIds.filter((id) => !s.project.captions.some((c) => c.id === id)),
+      selectedCaptionId: null,
+      project: { ...s.project, captions: [] },
+    })),
+
+  selectCaption: (captionId) =>
+    set({ selectedIds: captionId ? [captionId] : [], selectedCaptionId: captionId }),
 
   deoverlapCaptions: () =>
     set((s) => ({
       project: { ...s.project, captions: deoverlapArr(s.project.captions) },
     })),
 
+  addEffect: (effect) =>
+    set((s) => ({
+      project: { ...s.project, effects: [...(s.project.effects ?? []), { ...effect, id: uuid() }] },
+    })),
+
+  removeEffect: (effectId) =>
+    set((s) => ({
+      selectedEffectId: s.selectedEffectId === effectId ? null : s.selectedEffectId,
+      project: { ...s.project, effects: (s.project.effects ?? []).filter((e) => e.id !== effectId) },
+    })),
+
+  updateEffect: (effectId, updates) =>
+    set((s) => ({
+      project: {
+        ...s.project,
+        effects: (s.project.effects ?? []).map((e) => (e.id === effectId ? { ...e, ...updates } : e)),
+      },
+    })),
+
+  selectEffect: (effectId) => set({ selectedEffectId: effectId }),
+
+  setSelectedIds: (ids) => {
+    const { project } = get()
+    const captionIdSet = new Set(project.captions.map((c) => c.id))
+    const selectedCaption = ids.find((id) => captionIdSet.has(id)) ?? null
+    set({ selectedIds: ids, selectedCaptionId: selectedCaption })
+  },
+
   setCurrentTime: (currentTime) => set({ currentTime }),
 
   setIsPlaying: (isPlaying) => set({ isPlaying }),
+
+  setPlaybackAnchor: (playbackAnchor) => set({ playbackAnchor }),
 
   setZoom: (zoom) => set({ zoom: Math.max(20, Math.min(500, zoom)) }),
 
@@ -222,6 +298,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     for (const caption of project.captions) {
       if (caption.endTime > max) max = caption.endTime
     }
-    return max || 60 // default 60s if empty
+    return max || 60
   },
 }))

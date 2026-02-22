@@ -1,10 +1,55 @@
 .timeline {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   height: 100%;
   background: #1a1a1a;
   overflow: hidden;
   border-top: 1px solid #333;
+}
+
+.timelineBody {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  overflow: hidden;
+}
+
+.zoomBar {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 108px;
+  background: #181818;
+  border-top: 1px solid #2a2a2a;
+  flex-shrink: 0;
+}
+
+.zoomBtn {
+  background: none;
+  color: #555;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+
+.zoomBtn:hover {
+  color: #bbb;
+}
+
+.zoomSlider {
+  width: 110px;
+  accent-color: #4f8ef7;
+  cursor: pointer;
+}
+
+.zoomLabel {
+  font-size: 10px;
+  color: #555;
+  min-width: 38px;
+  user-select: none;
 }
 
 .labels {
@@ -16,6 +61,13 @@
   background: #202020;
   flex-shrink: 0;
   z-index: 10;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.labels::-webkit-scrollbar {
+  display: none;
 }
 
 .rulerCorner {
@@ -93,6 +145,12 @@
   background-color: #202020;
 }
 
+.trackDropTarget {
+  background-color: #1e2d3a !important;
+  outline: 1px solid #4f8ef7;
+  outline-offset: -1px;
+}
+
 .clip {
   position: absolute;
   top: 4px;
@@ -119,7 +177,12 @@
 
 .clipSelected {
   border-color: #4f8ef7;
-  box-shadow: 0 0 0 1px #4f8ef7;
+  box-shadow: 0 0 0 2px #4f8ef7;
+  outline: 1px solid #4f8ef7;
+}
+
+.clipSelected::before {
+  background: rgba(30, 60, 120, 0.45) !important;
 }
 
 .clipLabel {
@@ -210,7 +273,8 @@
 
 .captionBlockSelected {
   border-color: #4fdf8f;
-  box-shadow: 0 0 0 1px #4fdf8f;
+  box-shadow: 0 0 0 2px #4fdf8f;
+  outline: 1px solid #4fdf8f;
 }
 
 .captionBlockLabel {
@@ -224,4 +288,90 @@
   text-overflow: ellipsis;
   pointer-events: none;
   flex: 1;
+}
+
+.selectionBox {
+  position: absolute;
+  border: 1px solid #4f8ef7;
+  background: rgba(79, 142, 247, 0.1);
+  pointer-events: none;
+  z-index: 15;
+}
+
+/* Effects track */
+
+.effectTrackLabel {
+  color: #f5a623;
+}
+
+.effectsTrack {
+  background: #1a1500;
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 99px,
+    #221c00 99px,
+    #221c00 100px
+  );
+}
+
+.effectsTrack:hover {
+  background-color: #1d1800;
+}
+
+.effectBlock {
+  position: absolute;
+  top: 4px;
+  height: calc(100% - 8px);
+  background: #7a4d00;
+  border: 1px solid #f5a623;
+  border-radius: 4px;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  color: #ffd17a;
+  font-size: 11px;
+  font-weight: 600;
+  user-select: none;
+  min-width: 20px;
+}
+
+.effectBlock:active {
+  cursor: grabbing;
+}
+
+.effectBlockSelected {
+  border-color: #ffe580;
+  background: #a36a00;
+  outline: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.effectBlockLabel {
+  position: relative;
+  z-index: 1;
+  padding: 0 24px 0 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  flex: 1;
+}
+
+.effectParamsPanel {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 12px;
+  background: #1e1700;
+  border-top: 1px solid #3a2800;
+  font-size: 11px;
+  color: #f5a623;
+  flex-shrink: 0;
+}
+
+.effectParamsPanel label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }

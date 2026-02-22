@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback } from 'react'
 import { useProjectStore } from '../../store/project'
-import type { Caption } from '../../types/project'
+import type { Caption, Effect } from '../../types/project'
 import styles from './Preview.module.css'
 
 function pathToFileUrl(filePath: string): string {
@@ -11,7 +11,7 @@ function pathToFileUrl(filePath: string): string {
 function getActiveClip(
   project: ReturnType<typeof useProjectStore.getState>['project'],
   currentTime: number
-): { filePath: string; sourceTime: number } | null {
+): { filePath: string; sourceTime: number; timelineStart: number; sourceStart: number } | null {
   for (let i = project.tracks.length - 1; i >= 0; i--) {
     const track = project.tracks[i]
     if (track.type !== 'video') continue
@@ -20,7 +20,7 @@ function getActiveClip(
         const asset = project.assets.find((a) => a.id === clip.assetId)
         if (!asset) continue
         const sourceTime = clip.sourceStart + (currentTime - clip.timelineStart)
-        return { filePath: asset.filePath, sourceTime }
+        return { filePath: asset.filePath, sourceTime, timelineStart: clip.timelineStart, sourceStart: clip.sourceStart }
       }
     }
   }
@@ -28,7 +28,30 @@ function getActiveClip(
 }
 
 function getActiveCaptions(captions: Caption[], currentTime: number): Caption[] {
-  return captions.filter((c) => currentTime >= c.startTime && currentTime <= c.endTime)
+  return captions.filter(
+    (c) => c.endTime > c.startTime && currentTime >= c.startTime && currentTime <= c.endTime
+  )
+}
+
+function getActiveEffect(effects: Effect[] | undefined, currentTime: number): Effect | null {
+  if (!effects) return null
+  return effects.find((e) => e.timelineEnd > e.timelineStart && currentTime >= e.timelineStart && currentTime < e.timelineEnd) ?? null
+}
+
+function drawPixelated(
+  ctx: CanvasRenderingContext2D,
+  video: HTMLVideoElement,
+  blockSize: number,
+  width: number,
+  height: number
+): void {
+  const smallW = Math.max(1, Math.floor(width / blockSize))
+  const smallH = Math.max(1, Math.floor(height / blockSize))
+  const off = new OffscreenCanvas(smallW, smallH)
+  off.getContext('2d')!.drawImage(video, 0, 0, smallW, smallH)
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(off, 0, 0, width, height)
+  ctx.imageSmoothingEnabled = true
 }
 
 function drawCaptions(
@@ -47,7 +70,7 @@ function drawCaptions(
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
 
-    const y = (caption.style.positionY / 100) * height
+    const y = ((caption.style.positionY ?? 85) / 100) * height
     const padding = 12
     const metrics = ctx.measureText(caption.text)
     const textWidth = metrics.width
@@ -98,11 +121,28 @@ export function Preview() {
 
   const renderCanvas = useCallback(() => {
     const canvas = canvasRef.current
+    const video = videoRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+
+    const t = currentTimeRef.current
+    const proj = projectRef.current
+    const activeEffect = getActiveEffect(proj.effects, t)
+
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-    const active = getActiveCaptions(projectRef.current.captions, currentTimeRef.current)
+
+    if (activeEffect && video && video.readyState >= 2) {
+      const progress = (t - activeEffect.timelineStart) / (activeEffect.timelineEnd - activeEffect.timelineStart)
+      const blockSize = Math.max(1, Math.round(
+        activeEffect.params.startBlockSize +
+        (activeEffect.params.endBlockSize - activeEffect.params.startBlockSize) * progress
+      ))
+      drawPixelated(ctx, video, blockSize, canvas.width, canvas.height)
+      // No opacity change needed — the canvas draw fills the entire frame, covering the video element
+    }
+
+    const active = getActiveCaptions(proj.captions, t)
     drawCaptions(ctx, active, canvas.width, canvas.height)
   }, [])
 
@@ -158,10 +198,20 @@ export function Preview() {
       if (drift > 0.08) video.currentTime = targetTime
       if (!video.paused) video.pause()
     } else {
-      // Playing: only correct large drift so we don't interrupt smooth playback
-      const drift = Math.abs(video.currentTime - targetTime)
-      if (drift > 1.5) video.currentTime = targetTime
-      if (video.paused) video.play().catch(() => {})
+      // Playing
+      if (video.paused) {
+        // Video is paused but should be playing. Seek to the correct position
+        // before resuming (handles stale position from previous play session).
+        const drift = Math.abs(video.currentTime - targetTime)
+        if (drift > 0.1) video.currentTime = targetTime
+        video.play().catch(() => {})
+      } else if (video.readyState >= 2) {
+        // Video is actively playing. Correct significant drift — this handles
+        // clip transitions where two clips share the same source file but have
+        // different source positions (trimmed clips, multi-track, etc).
+        const drift = Math.abs(video.currentTime - targetTime)
+        if (drift > 0.5) video.currentTime = targetTime
+      }
     }
   }, [currentTime, isPlaying, project, renderCanvas])
 

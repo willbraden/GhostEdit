@@ -54,6 +54,29 @@ export interface Asset {
   thumbnailPath?: string // path to cached thumbnail image
 }
 
+export type EffectType = 'pixelate'
+
+export interface EffectParams {
+  startBlockSize: number  // 2–64
+  endBlockSize: number    // 2–64
+}
+
+export interface Effect {
+  id: string
+  type: EffectType
+  timelineStart: number
+  timelineEnd: number
+  params: EffectParams
+}
+
+export interface ExportEffect {
+  type: EffectType
+  timelineStart: number
+  timelineEnd: number
+  startBlockSize: number
+  endBlockSize: number
+}
+
 export interface Project {
   id: string
   name: string
@@ -62,6 +85,7 @@ export interface Project {
   tracks: Track[]   // ordered by z-index, last = topmost
   assets: Asset[]
   captions: Caption[]
+  effects: Effect[]
 }
 
 export interface WhisperWord {

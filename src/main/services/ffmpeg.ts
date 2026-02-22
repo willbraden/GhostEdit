@@ -116,11 +116,20 @@ export interface ExportAudioClip {
   timelineEnd: number
 }
 
+export interface ExportEffect {
+  type: 'pixelate'
+  timelineStart: number
+  timelineEnd: number
+  startBlockSize: number
+  endBlockSize: number
+}
+
 export interface ExportJobOptions {
   clips: ExportClip[]
   audioClips: ExportAudioClip[]
   muteVideoAudio: boolean
   captions: ExportCaption[]
+  effects: ExportEffect[]
   outputPath: string
   width: number
   height: number
@@ -130,13 +139,15 @@ export interface ExportJobOptions {
 }
 
 export async function exportVideo(options: ExportJobOptions): Promise<void> {
-  const { clips, audioClips, muteVideoAudio, captions, outputPath, width, height, fps, crf, onProgress } = options
+  const { clips, audioClips, muteVideoAudio, captions, effects, outputPath, width, height, fps, crf, onProgress } = options
 
   if (clips.length === 0) {
     throw new Error('No clips to export')
   }
 
-  const tmpDir = os.tmpdir()
+  // Resolve the real long path — os.tmpdir() can return 8.3 short names on Windows
+  // (e.g. WILLBR~1 instead of willbraden) which FFmpeg's concat demuxer may not resolve.
+  const tmpDir = fs.realpathSync(os.tmpdir())
   const segmentListPath = path.join(tmpDir, 've_segments.txt')
 
   // Build individual trimmed segments then concat
@@ -146,7 +157,7 @@ export async function exportVideo(options: ExportJobOptions): Promise<void> {
     const clip = clips[i]
     const segPath = path.join(tmpDir, `ve_seg_${i}.mp4`)
     segmentPaths.push(segPath)
-    const duration = clip.sourceEnd - clip.sourceStart
+    const duration = Math.max(0.01, clip.sourceEnd - clip.sourceStart)
 
     await execFileAsync(ffmpegPath, [
       '-ss', String(clip.sourceStart),
@@ -156,11 +167,19 @@ export async function exportVideo(options: ExportJobOptions): Promise<void> {
       '-c:v', 'libx264',
       '-crf', '18',
       '-preset', 'fast',
+      '-fps_mode', 'cfr',
+      '-r', String(fps),
       '-c:a', 'aac',
       '-ar', '44100',
       '-y',
       segPath,
-    ])
+    ]).catch((e: Error) => {
+      throw new Error(`Failed to encode segment ${i} (${path.basename(clip.filePath)}): ${e.message}`)
+    })
+
+    if (!fs.existsSync(segPath)) {
+      throw new Error(`Segment ${i} was not created — FFmpeg produced no output for "${path.basename(clip.filePath)}"`)
+    }
 
     if (onProgress) onProgress(Math.round(((i + 1) / clips.length) * 60))
   }
@@ -249,7 +268,16 @@ export async function exportVideo(options: ExportJobOptions): Promise<void> {
     )
   })
 
-  const vfFilterStr = drawtextFilters.length > 0 ? drawtextFilters.join(',') : 'null'
+  // Build pixelize filters from effects
+  const pixelizeFilters = (effects ?? [])
+    .filter((e) => e.type === 'pixelate' && e.timelineEnd > e.timelineStart)
+    .map((e) => {
+      const N = Math.max(2, Math.round((e.startBlockSize + e.endBlockSize) / 2))
+      return `pixelize=width=${N}:height=${N}:enable=between(t\\,${e.timelineStart}\\,${e.timelineEnd})`
+    })
+
+  const allVfFilters = [...pixelizeFilters, ...drawtextFilters]
+  const vfFilterStr = allVfFilters.length > 0 ? allVfFilters.join(',') : 'null'
   const hasAudioClips = audioClips.length > 0
 
   // Check whether the concatenated video actually has an audio stream.

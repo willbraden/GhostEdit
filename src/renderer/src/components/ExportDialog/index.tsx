@@ -95,11 +95,20 @@ export function ExportDialog({ onClose }: Props) {
         strokeColor: c.style.strokeColor,
       }))
 
+      const effects = (project.effects ?? []).map((e) => ({
+        type: e.type,
+        timelineStart: e.timelineStart,
+        timelineEnd: e.timelineEnd,
+        startBlockSize: e.params.startBlockSize,
+        endBlockSize: e.params.endBlockSize,
+      }))
+
       await window.api.exportVideo({
         clips,
         audioClips,
         muteVideoAudio,
         captions,
+        effects,
         outputPath,
         width: res.width,
         height: res.height,

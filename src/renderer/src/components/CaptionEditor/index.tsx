@@ -58,13 +58,13 @@ function parseBackground(bg: string): { hex: string; opacity: number } {
 }
 
 const DEFAULT_STYLE: Caption['style'] = {
-  fontSize: 32,
+  fontSize: 52,
   color: '#ffffff',
-  background: 'rgba(0,0,0,0.5)',
-  bold: false,
+  background: 'transparent',
+  bold: true,
   positionY: 85,
-  fontFamily: undefined,
-  strokeWidth: 0,
+  fontFamily: 'Inter',
+  strokeWidth: 5,
   strokeColor: '#000000',
 }
 
@@ -112,7 +112,7 @@ function CaptionRow({ caption, isSelected, onSelect, onChange, onRemove }: Capti
 }
 
 export function CaptionEditor() {
-  const { project, addCaptions, updateCaption, removeCaption, selectCaption, selectedCaptionId } =
+  const { project, addCaptions, updateCaption, removeCaption, selectCaption, selectedCaptionId, clearCaptions } =
     useProjectStore()
 
   const [transcribing, setTranscribing] = useState(false)
@@ -140,6 +140,22 @@ export function CaptionEditor() {
     return unsub
   }, [])
 
+  // Load the default font (Inter) on mount so the preview canvas renders it correctly
+  useEffect(() => {
+    loadGoogleFontCss('Inter')
+    window.api.downloadFont('Inter').catch(() => {})
+  }, [])
+
+  // Live apply-to-all: whenever the global style changes, push it to every caption immediately
+  const applyRef = useRef(false)
+  useEffect(() => {
+    if (!applyRef.current) { applyRef.current = true; return }
+    const { project: proj } = useProjectStore.getState()
+    for (const cap of proj.captions) {
+      updateCaption(cap.id, { style: { ...globalStyle } })
+    }
+  }, [globalStyle, updateCaption])
+
   const handleFontChange = (familyName: string): void => {
     setGlobalStyle((s) => ({ ...s, fontFamily: familyName || undefined }))
     if (familyName) {
@@ -157,6 +173,12 @@ export function CaptionEditor() {
     if (!asset) {
       alert('Add a video or audio clip to the timeline first, then transcribe.')
       return
+    }
+
+    if (project.captions.length > 0) {
+      const replace = window.confirm('Replace existing captions with the new transcription?')
+      if (!replace) return
+      clearCaptions()
     }
 
     setTranscribing(true)
@@ -181,12 +203,6 @@ export function CaptionEditor() {
       setProgress(`Error: ${String(e)}`)
     } finally {
       setTranscribing(false)
-    }
-  }
-
-  const applyStyleToAll = (): void => {
-    for (const cap of project.captions) {
-      updateCaption(cap.id, { style: { ...globalStyle } })
     }
   }
 
@@ -311,9 +327,6 @@ export function CaptionEditor() {
           <span className={styles.styleValue}>{globalStyle.positionY}%</span>
         </div>
 
-        <button className={styles.applyBtn} onClick={applyStyleToAll}>
-          Apply to all
-        </button>
       </div>
 
       <div className={styles.captionList}>

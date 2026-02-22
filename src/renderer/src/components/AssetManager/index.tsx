@@ -92,7 +92,10 @@ export function AssetManager() {
             onDragStart={(e) => handleDragStart(e, asset)}
             title={asset.filePath}
           >
-            <div className={styles.thumb}>
+            <div
+              className={styles.thumb}
+              style={{ aspectRatio: asset.width && asset.height ? `${asset.width} / ${asset.height}` : asset.type === 'audio' ? '3 / 1' : '16 / 9' }}
+            >
               {asset.thumbnailPath ? (
                 <img src={`file://${asset.thumbnailPath}`} alt={asset.name} />
               ) : (
