@@ -7,6 +7,45 @@ const TRACK_HEIGHT = 56
 const RULER_HEIGHT = 24
 const MIN_ZOOM = 20
 const MAX_ZOOM = 500
+const SNAP_THRESHOLD_PX = 8
+
+// Collect all snap points from the project state, excluding the given item ID
+function collectSnapPoints(excludeId: string): number[] {
+  const { project } = useProjectStore.getState()
+  const points: number[] = [0]
+  for (const track of project.tracks) {
+    for (const clip of track.clips) {
+      if (clip.id !== excludeId) {
+        points.push(clip.timelineStart, clip.timelineEnd)
+      }
+    }
+  }
+  for (const cap of project.captions) {
+    if (cap.id !== excludeId) {
+      points.push(cap.startTime, cap.endTime)
+    }
+  }
+  for (const eff of (project.effects ?? [])) {
+    if (eff.id !== excludeId) {
+      points.push(eff.timelineStart, eff.timelineEnd)
+    }
+  }
+  return points
+}
+
+// Returns the nearest snap point if within thresholdSecs, otherwise null
+function snapToPoints(time: number, points: number[], thresholdSecs: number): number | null {
+  let best: number | null = null
+  let bestDist = Infinity
+  for (const p of points) {
+    const d = Math.abs(p - time)
+    if (d < thresholdSecs && d < bestDist) {
+      best = p
+      bestDist = d
+    }
+  }
+  return best
+}
 
 // Log scale: zoom=20 → slider=0, zoom=100 → slider=50, zoom=500 → slider=100
 function zoomToSlider(z: number): number {
@@ -53,16 +92,18 @@ interface ClipBlockProps {
   onTrimLeft: (clipId: string, newTimelineStart: number, newSourceStart: number) => void
   onTrimRight: (clipId: string, newTimelineEnd: number, newSourceEnd: number) => void
   onContextMenu: (clipId: string, x: number, y: number) => void
+  onPushUndo: () => void
 }
 
 function ClipBlock({
-  clip, zoom, asset, isSelected, onDragStart, onSelect, onDragMove, onDragEnd, onTrimLeft, onTrimRight, onContextMenu,
+  clip, zoom, asset, isSelected, onDragStart, onSelect, onDragMove, onDragEnd, onTrimLeft, onTrimRight, onContextMenu, onPushUndo,
 }: ClipBlockProps) {
   const left = clip.timelineStart * zoom
   const width = Math.max((clip.timelineEnd - clip.timelineStart) * zoom, 20)
 
   const handleMouseDownMove = (e: React.MouseEvent): void => {
     e.stopPropagation()
+    onPushUndo()
     if (!isSelected) onSelect(clip.id)
     onDragStart(clip.id)
     const startX = e.clientX
@@ -83,6 +124,7 @@ function ClipBlock({
 
   const makeTrimHandler = (side: 'left' | 'right') => (e: React.MouseEvent): void => {
     e.stopPropagation()
+    onPushUndo()
     const startX = e.clientX
     const capTimelineStart = clip.timelineStart
     const capTimelineEnd = clip.timelineEnd
@@ -148,10 +190,11 @@ interface CaptionBlockProps {
   onTrimLeft: (captionId: string, newStart: number) => void
   onTrimRight: (captionId: string, newEnd: number) => void
   onDragEnd: () => void
+  onPushUndo: () => void
 }
 
 function CaptionBlock({
-  caption, zoom, isSelected, onDragStart, onSelect, onDragMove, onTrimLeft, onTrimRight, onDragEnd,
+  caption, zoom, isSelected, onDragStart, onSelect, onDragMove, onTrimLeft, onTrimRight, onDragEnd, onPushUndo,
 }: CaptionBlockProps) {
   const left = caption.startTime * zoom
   const width = Math.max((caption.endTime - caption.startTime) * zoom, 20)
@@ -159,6 +202,7 @@ function CaptionBlock({
 
   const handleMouseDownMove = (e: React.MouseEvent): void => {
     e.stopPropagation()
+    onPushUndo()
     if (!isSelected) onSelect(caption.id)
     onDragStart(caption.id)
     dragRef.current = { startX: e.clientX, startTime: caption.startTime, endTime: caption.endTime }
@@ -182,6 +226,7 @@ function CaptionBlock({
 
   const makeTrimHandler = (side: 'left' | 'right') => (e: React.MouseEvent): void => {
     e.stopPropagation()
+    onPushUndo()
     const startX = e.clientX
     const captureStart = caption.startTime
     const captureEnd = caption.endTime
@@ -228,15 +273,17 @@ interface EffectBlockProps {
   onTrimLeft: (effectId: string, newStart: number) => void
   onTrimRight: (effectId: string, newEnd: number) => void
   onDragEnd: () => void
+  onPushUndo: () => void
 }
 
-function EffectBlock({ effect, zoom, isSelected, onSelect, onDragMove, onTrimLeft, onTrimRight, onDragEnd }: EffectBlockProps) {
+function EffectBlock({ effect, zoom, isSelected, onSelect, onDragMove, onTrimLeft, onTrimRight, onDragEnd, onPushUndo }: EffectBlockProps) {
   const left = effect.timelineStart * zoom
   const width = Math.max((effect.timelineEnd - effect.timelineStart) * zoom, 20)
   const dragRef = useRef<{ startX: number; startTime: number; endTime: number } | null>(null)
 
   const handleMouseDownMove = (e: React.MouseEvent): void => {
     e.stopPropagation()
+    onPushUndo()
     if (!isSelected) onSelect(effect.id)
     dragRef.current = { startX: e.clientX, startTime: effect.timelineStart, endTime: effect.timelineEnd }
 
@@ -259,6 +306,7 @@ function EffectBlock({ effect, zoom, isSelected, onSelect, onDragMove, onTrimLef
 
   const makeTrimHandler = (side: 'left' | 'right') => (e: React.MouseEvent): void => {
     e.stopPropagation()
+    onPushUndo()
     const startX = e.clientX
     const captureStart = effect.timelineStart
     const captureEnd = effect.timelineEnd
@@ -329,6 +377,7 @@ export function Timeline() {
     updateEffect,
     selectEffect,
     selectedEffectId,
+    pushUndo,
   } = useProjectStore()
 
   const [captionMenu, setCaptionMenu] = useState<{ x: number; y: number; time: number } | null>(null)
@@ -543,10 +592,11 @@ export function Timeline() {
       const asset = project.assets.find((a) => a.id === clip.assetId)
       if (!asset) return
       const dur = asset.duration || 5
+      pushUndo()
       updateClip(clipId, { timelineEnd: clip.timelineStart + dur, sourceStart: 0, sourceEnd: dur })
       setClipMenu(null)
     },
-    [project.tracks, project.assets, updateClip]
+    [project.tracks, project.assets, pushUndo, updateClip]
   )
 
   const handleClipContextMenu = useCallback(
@@ -838,6 +888,7 @@ export function Timeline() {
                       onTrimLeft={handleTrimLeft}
                       onTrimRight={handleTrimRight}
                       onContextMenu={handleClipContextMenu}
+                      onPushUndo={pushUndo}
                     />
                   )
                 })}
@@ -861,6 +912,7 @@ export function Timeline() {
                   onTrimLeft={handleCaptionTrimLeft}
                   onTrimRight={handleCaptionTrimRight}
                   onDragEnd={deoverlapCaptions}
+                  onPushUndo={pushUndo}
                 />
               ))}
             </div>
@@ -882,6 +934,7 @@ export function Timeline() {
                   onTrimLeft={handleEffectTrimLeft}
                   onTrimRight={handleEffectTrimRight}
                   onDragEnd={() => {}}
+                  onPushUndo={pushUndo}
                 />
               ))}
             </div>

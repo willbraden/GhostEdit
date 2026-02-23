@@ -7,8 +7,14 @@ const api = {
   openFileDialog: () => ipcRenderer.invoke(IPC.FILE_OPEN_DIALOG),
   getMediaMetadata: (filePath: string, assetId: string) =>
     ipcRenderer.invoke(IPC.FILE_GET_METADATA, filePath, assetId),
-  saveProject: (project: unknown) => ipcRenderer.invoke(IPC.FILE_SAVE_PROJECT, project),
+  saveProject: (project: unknown, filePath: string) =>
+    ipcRenderer.invoke(IPC.FILE_SAVE_PROJECT, project, filePath),
+  saveProjectAs: (project: unknown, defaultName?: string) =>
+    ipcRenderer.invoke(IPC.FILE_SAVE_AS_PROJECT, project, defaultName),
   openProject: () => ipcRenderer.invoke(IPC.FILE_OPEN_PROJECT),
+  openProjectPath: (filePath: string) =>
+    ipcRenderer.invoke(IPC.FILE_OPEN_PROJECT_PATH, filePath),
+  getRecentFiles: () => ipcRenderer.invoke(IPC.FILE_GET_RECENTS),
   saveDialog: (defaultName: string) => ipcRenderer.invoke(IPC.FILE_SAVE_DIALOG, defaultName),
 
   // FFmpeg

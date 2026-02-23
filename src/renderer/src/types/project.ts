@@ -120,7 +120,10 @@ export const IPC = {
   FILE_OPEN_DIALOG: 'file:openDialog',
   FILE_GET_METADATA: 'file:getMetadata',
   FILE_SAVE_PROJECT: 'file:saveProject',
+  FILE_SAVE_AS_PROJECT: 'file:saveAsProject',
   FILE_OPEN_PROJECT: 'file:openProject',
+  FILE_OPEN_PROJECT_PATH: 'file:openProjectPath',
+  FILE_GET_RECENTS: 'file:getRecents',
   FILE_SAVE_DIALOG: 'file:saveDialog',
 
   // FFmpeg

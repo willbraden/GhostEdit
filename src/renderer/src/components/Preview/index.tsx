@@ -137,7 +137,10 @@ function drawCaptions(
       const lines = computeVisualLines(words, ctx, width * 0.85)
       const spaceW = ctx.measureText(' ').width
 
-      const activeWordIdx = words.findIndex((w) => currentTime >= w.start && currentTime <= w.end)
+      // Offset for captions moved/trimmed on the timeline after transcription.
+      const wordOffset = words.length > 0 ? caption.startTime - words[0].start : 0
+
+      const activeWordIdx = words.findIndex((w) => currentTime >= w.start + wordOffset && currentTime <= w.end + wordOffset)
 
       // Determine which line to show
       const lineForWord = (wi: number): number => {
@@ -156,7 +159,7 @@ function drawCaptions(
         // Show the line of the most recently completed word
         let lastSpoken = -1
         for (let wi = 0; wi < words.length; wi++) {
-          if (words[wi].end <= currentTime) lastSpoken = wi
+          if (words[wi].end + wordOffset <= currentTime) lastSpoken = wi
           else break
         }
         if (lastSpoken >= 0) activeLineIdx = lineForWord(lastSpoken)

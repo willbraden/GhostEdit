@@ -133,3 +133,96 @@
 .exportBtn:hover {
   background: #3a7de0;
 }
+
+/* ── Dirty indicator ─────────────────────────────────────────────────────── */
+
+.dirtyDot {
+  color: #f5a623;
+  font-size: 10px;
+  margin-right: 2px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* ── Open + recents dropdown ─────────────────────────────────────────────── */
+
+.openWrapper {
+  position: relative;
+}
+
+.recentsDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 1000;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 6px;
+  min-width: 280px;
+  padding: 4px 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.recentsOpenBtn {
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  background: transparent;
+  color: #ccc;
+  font-size: 12px;
+  text-align: left;
+  transition: background 0.1s, color 0.1s;
+}
+
+.recentsOpenBtn:hover {
+  background: #3a3a3a;
+  color: #fff;
+}
+
+.recentsHeader {
+  padding: 6px 14px 3px;
+  font-size: 10px;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-top: 1px solid #333;
+  margin-top: 3px;
+}
+
+.recentItem {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 14px;
+  background: transparent;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.recentItem:hover {
+  background: #3a3a3a;
+}
+
+.recentName {
+  color: #ccc;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 252px;
+}
+
+.recentItem:hover .recentName {
+  color: #fff;
+}
+
+.recentPath {
+  font-size: 10px;
+  color: #555;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 252px;
+}

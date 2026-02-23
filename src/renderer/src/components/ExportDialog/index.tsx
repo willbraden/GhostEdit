@@ -58,11 +58,29 @@ async function computeExportCaptions(captions: Caption[], exportWidth: number, e
     ctx.font = fontSpec
     const spaceW = ctx.measureText(' ').width
 
+    // Offset to apply to all word timestamps: accounts for captions that were
+    // moved/trimmed on the timeline after transcription. cap.startTime reflects
+    // the current timeline position; words[0].start is the original Whisper time.
+    const wordOffset = cap.startTime - cap.words[0].start
+
+    // Apply offset AND clamp to monotonically non-overlapping windows.
+    // Whisper can produce word timestamps that regress (word N+1 starts before word N
+    // ends), especially at 30-second chunk boundaries. In FFmpeg every word gets its
+    // own drawtext layer, so overlapping highlight windows cause the later word to
+    // visually overwrite the earlier one — highlighting the wrong word.
+    let prevEnd = cap.words[0].start + wordOffset
+    const adjustedWords: CaptionWord[] = cap.words.map((word) => {
+      const adjStart = Math.max(prevEnd, word.start + wordOffset)
+      const adjEnd = Math.max(adjStart + 0.01, word.end + wordOffset)
+      prevEnd = adjEnd
+      return { ...word, start: adjStart, end: adjEnd }
+    })
+
     const lines: CaptionWord[][] = []
     let line: CaptionWord[] = []
     let lineW = 0
 
-    for (const word of cap.words) {
+    for (const word of adjustedWords) {
       const ww = ctx.measureText(word.word).width
       const needed = line.length > 0 ? spaceW + ww : ww
       if (line.length > 0 && lineW + needed > maxLineW) {
@@ -95,6 +113,7 @@ async function computeExportCaptions(captions: Caption[], exportWidth: number, e
         const xOffset = Math.round(ctx.measureText(prefix).width)
         const wordAscent = ctx.measureText(l[wi].word).actualBoundingBoxAscent
         const yAdjustPx = Math.round(lineAscent - wordAscent)
+        // l[wi] already contains the clamped start/end from adjustedWords
         wordOffsets.push({ word: l[wi].word, start: l[wi].start, end: l[wi].end, xOffset, yAdjustPx })
       }
 

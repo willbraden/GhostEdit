@@ -27,3 +27,77 @@
   flex-shrink: 0;
   overflow: hidden;
 }
+
+/* ── Unsaved Changes Modal ──────────────────────────────────────────────── */
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modalBox {
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 10px;
+  padding: 28px 32px;
+  min-width: 380px;
+  text-align: center;
+}
+
+.modalBox h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: #e0e0e0;
+  margin-bottom: 8px;
+}
+
+.modalBox p {
+  font-size: 13px;
+  color: #999;
+  margin-bottom: 24px;
+}
+
+.modalActions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.btnSave {
+  background: #4f8ef7;
+  color: #fff;
+  border-radius: 6px;
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btnSave:hover { background: #3a7de0; }
+
+.btnDiscard {
+  background: #c0392b;
+  color: #fff;
+  border-radius: 6px;
+  padding: 8px 20px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btnDiscard:hover { background: #a93226; }
+
+.btnCancel {
+  background: #333;
+  color: #ccc;
+  border-radius: 6px;
+  padding: 8px 20px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btnCancel:hover { background: #444; color: #fff; }

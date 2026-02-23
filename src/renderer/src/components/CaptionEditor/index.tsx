@@ -66,7 +66,7 @@ const DEFAULT_STYLE: Caption['style'] = {
 }
 
 export function CaptionEditor() {
-  const { project, addCaptions, updateCaption, clearCaptions } = useProjectStore()
+  const { project, addCaptions, updateCaption, clearCaptions, pushUndo } = useProjectStore()
 
   const [transcribing, setTranscribing] = useState(false)
   const [progress, setProgress] = useState('')
@@ -106,6 +106,7 @@ export function CaptionEditor() {
   }, [globalStyle, updateCaption])
 
   const handleFontChange = (familyName: string): void => {
+    pushUndo()
     setGlobalStyle((s) => ({ ...s, fontFamily: familyName || undefined }))
     if (familyName) {
       loadGoogleFontCss(familyName)
@@ -211,6 +212,7 @@ export function CaptionEditor() {
             min={16}
             max={96}
             value={globalStyle.fontSize}
+            onMouseDown={() => pushUndo()}
             onChange={(e) => setGlobalStyle({ ...globalStyle, fontSize: Number(e.target.value) })}
             className={styles.rangeInput}
           />
@@ -223,13 +225,14 @@ export function CaptionEditor() {
           <input
             type="color"
             value={globalStyle.color}
+            onFocus={() => pushUndo()}
             onChange={(e) => setGlobalStyle({ ...globalStyle, color: e.target.value })}
           />
           <label className={styles.boldLabel}>
             <input
               type="checkbox"
               checked={globalStyle.bold}
-              onChange={(e) => setGlobalStyle({ ...globalStyle, bold: e.target.checked })}
+              onChange={(e) => { pushUndo(); setGlobalStyle({ ...globalStyle, bold: e.target.checked }) }}
             />
             Bold
           </label>
@@ -241,6 +244,7 @@ export function CaptionEditor() {
           <input
             type="color"
             value={globalStyle.highlightColor || '#ffe400'}
+            onFocus={() => pushUndo()}
             onChange={(e) => setGlobalStyle({ ...globalStyle, highlightColor: e.target.value })}
           />
           <span className={styles.styleValue} style={{ fontSize: 10, opacity: 0.6 }}>active word</span>
@@ -252,6 +256,7 @@ export function CaptionEditor() {
           <input
             type="color"
             value={globalStyle.strokeColor || '#000000'}
+            onFocus={() => pushUndo()}
             onChange={(e) => setGlobalStyle({ ...globalStyle, strokeColor: e.target.value })}
           />
           <input
@@ -259,6 +264,7 @@ export function CaptionEditor() {
             min={0}
             max={8}
             value={globalStyle.strokeWidth || 0}
+            onMouseDown={() => pushUndo()}
             onChange={(e) => setGlobalStyle({ ...globalStyle, strokeWidth: Number(e.target.value) })}
             className={styles.rangeInput}
           />
@@ -271,6 +277,7 @@ export function CaptionEditor() {
           <input
             type="color"
             value={bgColor}
+            onFocus={() => pushUndo()}
             onChange={(e) => setBgColor(e.target.value)}
           />
           <input
@@ -278,6 +285,7 @@ export function CaptionEditor() {
             min={0}
             max={100}
             value={Math.round(bgOpacity * 100)}
+            onMouseDown={() => pushUndo()}
             onChange={(e) => setBgOpacity(Number(e.target.value) / 100)}
             className={styles.rangeInput}
           />
@@ -292,6 +300,7 @@ export function CaptionEditor() {
             min={0}
             max={100}
             value={globalStyle.positionY}
+            onMouseDown={() => pushUndo()}
             onChange={(e) => setGlobalStyle({ ...globalStyle, positionY: Number(e.target.value) })}
             className={styles.rangeInput}
           />
