@@ -23,7 +23,6 @@ export const GOOGLE_FONTS = [
   'Quicksand',
 ]
 
-// Loaded font families (to avoid duplicate <link> tags)
 const loadedFontLinks = new Set<string>()
 
 function loadGoogleFontCss(familyName: string): void {
@@ -35,7 +34,6 @@ function loadGoogleFontCss(familyName: string): void {
   document.head.appendChild(link)
 }
 
-// Convert hex + opacity (0-1) to rgba string
 function hexToRgba(hex: string, opacity: number): string {
   const r = parseInt(hex.slice(1, 3), 16)
   const g = parseInt(hex.slice(3, 5), 16)
@@ -43,7 +41,6 @@ function hexToRgba(hex: string, opacity: number): string {
   return `rgba(${r},${g},${b},${opacity})`
 }
 
-// Parse a rgba/hex color string back to { hex, opacity }
 function parseBackground(bg: string): { hex: string; opacity: number } {
   if (bg === 'transparent') return { hex: '#000000', opacity: 0 }
   const m = bg.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/)
@@ -53,7 +50,6 @@ function parseBackground(bg: string): { hex: string; opacity: number } {
     const b = parseInt(m[3]).toString(16).padStart(2, '0')
     return { hex: `#${r}${g}${b}`, opacity: m[4] !== undefined ? parseFloat(m[4]) : 1 }
   }
-  // Assume it's a hex color with full opacity
   return { hex: bg.startsWith('#') ? bg.slice(0, 7) : '#000000', opacity: 1 }
 }
 
@@ -66,65 +62,20 @@ const DEFAULT_STYLE: Caption['style'] = {
   fontFamily: 'Inter',
   strokeWidth: 5,
   strokeColor: '#000000',
-}
-
-interface CaptionRowProps {
-  caption: Caption
-  isSelected: boolean
-  onSelect: () => void
-  onChange: (updates: Partial<Caption>) => void
-  onRemove: () => void
-}
-
-function CaptionRow({ caption, isSelected, onSelect, onChange, onRemove }: CaptionRowProps) {
-  const fmt = (s: number): string => {
-    const m = Math.floor(s / 60)
-    const sec = (s % 60).toFixed(1)
-    return `${m}:${String(sec).padStart(4, '0')}`
-  }
-
-  const fontFamily = caption.style.fontFamily
-  const fontStyle: React.CSSProperties = fontFamily
-    ? { fontFamily: `"${fontFamily}", Arial, sans-serif` }
-    : {}
-
-  return (
-    <div
-      className={`${styles.captionRow} ${isSelected ? styles.captionRowSelected : ''}`}
-      onClick={onSelect}
-    >
-      <div className={styles.captionTimes}>
-        <span>{fmt(caption.startTime)}</span>
-        <span className={styles.captionArrow}>→</span>
-        <span>{fmt(caption.endTime)}</span>
-      </div>
-      <textarea
-        className={styles.captionText}
-        style={fontStyle}
-        value={caption.text}
-        onChange={(e) => onChange({ text: e.target.value })}
-        rows={2}
-        onClick={(e) => e.stopPropagation()}
-      />
-      <button className={styles.removeCapBtn} onClick={(e) => { e.stopPropagation(); onRemove() }}>×</button>
-    </div>
-  )
+  highlightColor: '#ffe400',
 }
 
 export function CaptionEditor() {
-  const { project, addCaptions, updateCaption, removeCaption, selectCaption, selectedCaptionId, clearCaptions } =
-    useProjectStore()
+  const { project, addCaptions, updateCaption, clearCaptions } = useProjectStore()
 
   const [transcribing, setTranscribing] = useState(false)
   const [progress, setProgress] = useState('')
   const [globalStyle, setGlobalStyle] = useState<Caption['style']>(DEFAULT_STYLE)
 
-  // Parse background into editable parts
   const parsedBg = parseBackground(globalStyle.background)
   const [bgColor, setBgColor] = useState(parsedBg.hex)
   const [bgOpacity, setBgOpacity] = useState(parsedBg.opacity)
 
-  // Keep background string in sync with bgColor/bgOpacity
   const bgSyncRef = useRef(false)
   useEffect(() => {
     if (!bgSyncRef.current) { bgSyncRef.current = true; return }
@@ -134,19 +85,17 @@ export function CaptionEditor() {
     }))
   }, [bgColor, bgOpacity])
 
-  // Subscribe to whisper progress
   useEffect(() => {
     const unsub = window.api.onWhisperProgress((msg) => setProgress(msg))
     return unsub
   }, [])
 
-  // Load the default font (Inter) on mount so the preview canvas renders it correctly
   useEffect(() => {
     loadGoogleFontCss('Inter')
     window.api.downloadFont('Inter').catch(() => {})
   }, [])
 
-  // Live apply-to-all: whenever the global style changes, push it to every caption immediately
+  // Live apply style to all captions
   const applyRef = useRef(false)
   useEffect(() => {
     if (!applyRef.current) { applyRef.current = true; return }
@@ -191,6 +140,7 @@ export function CaptionEditor() {
             text: r.text,
             startTime: r.startTime,
             endTime: r.endTime,
+            words: r.words,
             style: { ...globalStyle },
           }))
         )
@@ -206,24 +156,34 @@ export function CaptionEditor() {
     }
   }
 
+  const wordCount = project.captions.reduce((n, c) => n + (c.words?.length ?? c.text.split(' ').length), 0)
   const currentFont = globalStyle.fontFamily || ''
 
   return (
     <div className={styles.panel}>
       <div className={styles.header}>
         <span className={styles.title}>Captions</span>
-        <button
-          className={styles.transcribeBtn}
-          onClick={handleTranscribe}
-          disabled={transcribing}
-        >
-          {transcribing ? 'Transcribing...' : '⚡ Auto'}
-        </button>
+        <div className={styles.headerActions}>
+          {project.captions.length > 0 && (
+            <button className={styles.clearBtn} onClick={() => clearCaptions()} title="Clear all captions">
+              Clear
+            </button>
+          )}
+          <button
+            className={styles.transcribeBtn}
+            onClick={handleTranscribe}
+            disabled={transcribing}
+          >
+            {transcribing ? 'Transcribing...' : '⚡ Auto'}
+          </button>
+        </div>
       </div>
 
       {progress && <div className={styles.progress}>{progress}</div>}
+      {!transcribing && wordCount > 0 && !progress && (
+        <div className={styles.wordCount}>{wordCount} words transcribed</div>
+      )}
 
-      {/* Global style controls */}
       <div className={styles.stylePanel}>
         {/* Font family */}
         <div className={styles.styleRow}>
@@ -273,6 +233,17 @@ export function CaptionEditor() {
             />
             Bold
           </label>
+        </div>
+
+        {/* Highlight color (karaoke active word) */}
+        <div className={styles.styleRow}>
+          <label>Highlight</label>
+          <input
+            type="color"
+            value={globalStyle.highlightColor || '#ffe400'}
+            onChange={(e) => setGlobalStyle({ ...globalStyle, highlightColor: e.target.value })}
+          />
+          <span className={styles.styleValue} style={{ fontSize: 10, opacity: 0.6 }}>active word</span>
         </div>
 
         {/* Stroke */}
@@ -326,29 +297,6 @@ export function CaptionEditor() {
           />
           <span className={styles.styleValue}>{globalStyle.positionY}%</span>
         </div>
-
-      </div>
-
-      <div className={styles.captionList}>
-        {project.captions.length === 0 && (
-          <div className={styles.empty}>
-            <p>No captions yet.</p>
-            <p>Click ⚡ Auto to transcribe voiceover.</p>
-          </div>
-        )}
-        {project.captions
-          .slice()
-          .sort((a, b) => a.startTime - b.startTime)
-          .map((cap) => (
-            <CaptionRow
-              key={cap.id}
-              caption={cap}
-              isSelected={selectedCaptionId === cap.id}
-              onSelect={() => selectCaption(cap.id)}
-              onChange={(updates) => updateCaption(cap.id, updates)}
-              onRemove={() => removeCaption(cap.id)}
-            />
-          ))}
       </div>
     </div>
   )

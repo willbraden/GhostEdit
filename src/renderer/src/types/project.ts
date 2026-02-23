@@ -3,6 +3,12 @@ export type Fps = 30 | 60
 export type TrackType = 'video' | 'audio'
 export type AssetType = 'video' | 'audio' | 'image'
 
+export interface CaptionWord {
+  word: string
+  start: number // seconds
+  end: number   // seconds
+}
+
 export interface CaptionStyle {
   fontSize: number
   color: string
@@ -12,6 +18,7 @@ export interface CaptionStyle {
   fontFamily?: string  // Google Font family name; undefined = system Arial
   strokeWidth?: number // text outline width in px (0 = none)
   strokeColor?: string // text outline color hex
+  highlightColor?: string // karaoke: color of the currently spoken word
 }
 
 export interface Caption {
@@ -20,6 +27,7 @@ export interface Caption {
   startTime: number // seconds
   endTime: number // seconds
   style: CaptionStyle
+  words?: CaptionWord[] // word-level timestamps for karaoke highlighting
 }
 
 export interface Clip {
@@ -54,12 +62,19 @@ export interface Asset {
   thumbnailPath?: string // path to cached thumbnail image
 }
 
-export type EffectType = 'pixelate'
+export type EffectType = 'pixelate' | 'duotone'
 
-export interface EffectParams {
+export interface PixelateParams {
   startBlockSize: number  // 2–64
   endBlockSize: number    // 2–64
 }
+
+export interface DuotoneParams {
+  shadowColor: string    // '#rrggbb' — mapped to dark tones
+  highlightColor: string // '#rrggbb' — mapped to bright tones
+}
+
+export type EffectParams = PixelateParams | DuotoneParams
 
 export interface Effect {
   id: string
@@ -69,13 +84,9 @@ export interface Effect {
   params: EffectParams
 }
 
-export interface ExportEffect {
-  type: EffectType
-  timelineStart: number
-  timelineEnd: number
-  startBlockSize: number
-  endBlockSize: number
-}
+export type ExportEffect =
+  | { type: 'pixelate'; timelineStart: number; timelineEnd: number; startBlockSize: number; endBlockSize: number }
+  | { type: 'duotone';  timelineStart: number; timelineEnd: number; shadowColor: string; highlightColor: string }
 
 export interface Project {
   id: string

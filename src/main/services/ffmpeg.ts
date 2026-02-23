@@ -94,6 +94,14 @@ export interface ExportClip {
   timelineEnd: number
 }
 
+export interface ExportCaptionWord {
+  word: string
+  startTime: number
+  endTime: number
+  xOffset: number    // px from left edge of the rendered line (canvas-measured at export res)
+  yAdjustPx: number  // px to shift DOWN so word baseline aligns with the full-line baseline
+}
+
 export interface ExportCaption {
   text: string
   startTime: number
@@ -103,9 +111,12 @@ export interface ExportCaption {
   background: string
   bold: boolean
   positionY: number
-  fontFamily?: string  // Google Font family name; undefined = system Arial
-  strokeWidth?: number // text outline width in px
-  strokeColor?: string // text outline color hex
+  fontFamily?: string    // Google Font family name; undefined = system Arial
+  strokeWidth?: number   // text outline width in px
+  strokeColor?: string   // text outline color hex
+  highlightColor?: string // karaoke active-word color
+  lineWidthPx?: number   // total line width in px (canvas-measured) for centering word overlays
+  words?: ExportCaptionWord[]
 }
 
 export interface ExportAudioClip {
@@ -116,13 +127,9 @@ export interface ExportAudioClip {
   timelineEnd: number
 }
 
-export interface ExportEffect {
-  type: 'pixelate'
-  timelineStart: number
-  timelineEnd: number
-  startBlockSize: number
-  endBlockSize: number
-}
+export type ExportEffect =
+  | { type: 'pixelate'; timelineStart: number; timelineEnd: number; startBlockSize: number; endBlockSize: number }
+  | { type: 'duotone';  timelineStart: number; timelineEnd: number; shadowColor: string; highlightColor: string }
 
 export interface ExportJobOptions {
   clips: ExportClip[]
@@ -219,11 +226,22 @@ export async function exportVideo(options: ExportJobOptions): Promise<void> {
     .sort((a, b) => a.startTime - b.startTime)
 
   // Escape text for drawtext text= option.
-  // Wrap in single quotes so commas, colons, double-quotes are all protected at the filtergraph level.
-  // Single quotes inside the text are broken out as '\'' (exit quote, escaped quote, re-enter quote).
-  // Backslashes are doubled at the option level.
+  // CRITICAL: the filtergraph parser does NOT treat \' as an escaped apostrophe — the ' still
+  // opens single-quote mode, silently consuming all remaining options into the text value and
+  // rendering a blank frame. Solution: replace the ASCII apostrophe (U+0027) with the Unicode
+  // right single quotation mark (U+2019), which has no special meaning to the parser.
+  // U+2019 is typographically correct and supported by all major fonts.
+  // % must be doubled (→ %%) because drawtext uses % for text expansion sequences.
   const escapeText = (t: string): string =>
-    "'" + t.replace(/\\/g, '\\\\').replace(/'/g, "'\\''") + "'"
+    t
+      .replace(/'/g, '\u2019')  // ASCII apostrophe → U+2019 right single quote (avoids parser quote mode)
+      .replace(/\\/g, '\\\\')  // backslash → \\ (must be before other escapes)
+      .replace(/"/g, '\\"')    // double-quote → \"
+      .replace(/:/g, '\\:')    // colon (option delimiter) → \:
+      .replace(/,/g, '\\,')    // comma (filter separator) → \,
+      .replace(/\[/g, '\\[')   // bracket (pad label) → \[
+      .replace(/\]/g, '\\]')   // bracket (pad label) → \]
+      .replace(/%/g, '%%')     // percent → %% (drawtext text expansion)
 
   // Pre-resolve font paths for all unique family+bold combos (downloads from Google Fonts if needed)
   const fontPathCache = new Map<string, string>()
@@ -243,7 +261,7 @@ export async function exportVideo(options: ExportJobOptions): Promise<void> {
   const fontScale = width / referenceWidth
 
   // Build drawtext filters for captions
-  const drawtextFilters = validCaptions.map((cap) => {
+  const drawtextFilters = validCaptions.flatMap((cap) => {
     const fontsize = Math.max(8, Math.round((cap.fontSize || 32) * fontScale))
     const fontcolor = toFfmpegColor(cap.color || 'white')
     const boxcolor = cap.background === 'transparent' ? 'black@0.0' : toFfmpegColor(cap.background || 'black@0.5')
@@ -256,29 +274,124 @@ export async function exportVideo(options: ExportJobOptions): Promise<void> {
     const strokePart = strokeW > 0
       ? `:borderw=${strokeW}:bordercolor=${toFfmpegColor(cap.strokeColor || '#000000')}`
       : ''
-    return (
-      `drawtext=fontfile='${fontFile}'` +
-      `:text=${escapeText(cap.text)}` +
-      `:fontsize=${fontsize}` +
-      `:fontcolor=${fontcolor}` +
-      strokePart +
-      `:box=1:boxcolor=${boxcolor}:boxborderw=8` +
-      `:x=(w-text_w)/2:y=${y}` +
-      `:enable=between(t\\,${cap.startTime}\\,${cap.endTime})`
-    )
+
+    const filters: string[] = []
+
+    if (cap.words && cap.words.length > 0 && cap.lineWidthPx && cap.lineWidthPx > 0 && cap.highlightColor) {
+      // Karaoke mode: render each word as an independent drawtext at its canvas-measured
+      // x position. The highlight overlay for each word uses the IDENTICAL x,y formula as
+      // the normal-color render, so alignment is always pixel-perfect regardless of any
+      // canvas vs FreeType advance-width differences.
+      const lw = cap.lineWidthPx
+      const hlColor = toFfmpegColor(cap.highlightColor)
+
+      // Background box: invisible text just to draw the line's background box.
+      filters.push(
+        `drawtext=fontfile='${fontFile}'` +
+        `:text=${escapeText(cap.text)}` +
+        `:fontsize=${fontsize}:fontcolor=black@0` +
+        `:box=1:boxcolor=${boxcolor}:boxborderw=8` +
+        `:x=(w-${lw})/2:y=${y}` +
+        `:enable=between(t\\,${cap.startTime}\\,${cap.endTime})`
+      )
+
+      for (const w of cap.words) {
+        const wx = `(w-${lw})/2+${w.xOffset}`
+        // Shift each word down so its baseline aligns with the full-line baseline.
+        // FreeType positions text at y = top-of-bounding-box; words with only x-height
+        // glyphs (no ascenders) have a shorter bounding box and sit too high otherwise.
+        const wy = w.yAdjustPx > 0 ? `${y}+${w.yAdjustPx}` : y
+        const wt = escapeText(w.word)
+        // Normal color word — visible throughout the caption's time range
+        filters.push(
+          `drawtext=fontfile='${fontFile}'` +
+          `:text=${wt}:fontsize=${fontsize}:fontcolor=${fontcolor}` +
+          strokePart + `:box=0` +
+          `:x=${wx}:y=${wy}` +
+          `:enable=between(t\\,${cap.startTime}\\,${cap.endTime})`
+        )
+        // Highlight color word — shown only during this word's time window (drawn on top)
+        filters.push(
+          `drawtext=fontfile='${fontFile}'` +
+          `:text=${wt}:fontsize=${fontsize}:fontcolor=${hlColor}` +
+          strokePart + `:box=0` +
+          `:x=${wx}:y=${wy}` +
+          `:enable=between(t\\,${w.startTime}\\,${w.endTime})`
+        )
+      }
+    } else {
+      // Standard mode: single full-line drawtext, no karaoke
+      const xBase = cap.lineWidthPx && cap.lineWidthPx > 0
+        ? `(w-${cap.lineWidthPx})/2`
+        : `(w-text_w)/2`
+      filters.push(
+        `drawtext=fontfile='${fontFile}'` +
+        `:text=${escapeText(cap.text)}` +
+        `:fontsize=${fontsize}:fontcolor=${fontcolor}` +
+        strokePart +
+        `:box=1:boxcolor=${boxcolor}:boxborderw=8` +
+        `:x=${xBase}:y=${y}` +
+        `:enable=between(t\\,${cap.startTime}\\,${cap.endTime})`
+      )
+    }
+
+    return filters
   })
 
-  // Build pixelize filters from effects
+  // Build animated pixelation filters from effects.
+  // pixelize only accepts integer block sizes (no per-frame expressions), so we approximate
+  // the animation by splitting each effect into 16 equal time slices, each with a linearly
+  // interpolated integer block size. At 16 steps the staircase is barely noticeable.
+  type PixelateExport = Extract<ExportEffect, { type: 'pixelate' }>
   const pixelizeFilters = (effects ?? [])
-    .filter((e) => e.type === 'pixelate' && e.timelineEnd > e.timelineStart)
-    .map((e) => {
-      const N = Math.max(2, Math.round((e.startBlockSize + e.endBlockSize) / 2))
-      return `pixelize=width=${N}:height=${N}:enable=between(t\\,${e.timelineStart}\\,${e.timelineEnd})`
+    .filter((e): e is PixelateExport => e.type === 'pixelate' && e.timelineEnd > e.timelineStart)
+    .flatMap((e) => {
+      const STEPS = 16
+      const dur = e.timelineEnd - e.timelineStart
+      const stepDur = dur / STEPS
+      return Array.from({ length: STEPS }, (_, i) => {
+        const t0 = (e.timelineStart + i * stepDur).toFixed(4)
+        const t1 = (e.timelineStart + (i + 1) * stepDur).toFixed(4)
+        const progress = (i + 0.5) / STEPS
+        const N = Math.max(2, Math.round(e.startBlockSize + (e.endBlockSize - e.startBlockSize) * progress))
+        return `pixelize=width=${N}:height=${N}:enable=between(t\\,${t0}\\,${t1})`
+      })
     })
 
-  const allVfFilters = [...pixelizeFilters, ...drawtextFilters]
+  // Build duotone filters — desaturate with hue=s=0 then remap via curves.
+  // Both filters operate in YUV space so output stays yuv420p-compatible (no gbrp issues).
+  // curves= maps grayscale [0,1] shadow→highlight for each R/G/B channel.
+  type DuotoneExport = Extract<ExportEffect, { type: 'duotone' }>
+  const hexToRgb = (hex: string): [number, number, number] => [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ]
+  const duotoneFilters = (effects ?? [])
+    .filter((e): e is DuotoneExport => e.type === 'duotone' && e.timelineEnd > e.timelineStart)
+    .flatMap((e) => {
+      const [sr, sg, sb] = hexToRgb(e.shadowColor)
+      const [hr, hg, hb] = hexToRgb(e.highlightColor)
+      const TS = e.timelineStart.toFixed(4)
+      const TE = e.timelineEnd.toFixed(4)
+      const en = `enable=between(t\\,${TS}\\,${TE})`
+      // Normalize shadow/highlight to 0–1 for curves control points: "0/shadow 1/highlight"
+      return [
+        `hue=s=0:${en}`,
+        // No shell quoting here — execFile passes args directly, single-quotes would be literal.
+        // Spaces within each option value are fine; FFmpeg's option parser uses : as delimiter.
+        `curves=red=0/${(sr/255).toFixed(4)} 1/${(hr/255).toFixed(4)}:green=0/${(sg/255).toFixed(4)} 1/${(hg/255).toFixed(4)}:blue=0/${(sb/255).toFixed(4)} 1/${(hb/255).toFixed(4)}:${en}`,
+      ]
+    })
+
+  const allVfFilters = [...pixelizeFilters, ...duotoneFilters, ...drawtextFilters]
   const vfFilterStr = allVfFilters.length > 0 ? allVfFilters.join(',') : 'null'
   const hasAudioClips = audioClips.length > 0
+
+  // Write filter strings to temp files to avoid ENAMETOOLONG on Windows.
+  // With per-word karaoke drawtext filters the inline argument can exceed Windows' ~32KB limit.
+  const vfScriptPath = path.join(tmpDir, 've_vf_script.txt')
+  const fcScriptPath = path.join(tmpDir, 've_fc_script.txt')
 
   // Check whether the concatenated video actually has an audio stream.
   // Video-only clips produce a concat with no audio, so referencing [0:a] in
@@ -320,33 +433,41 @@ export async function exportVideo(options: ExportJobOptions): Promise<void> {
       )
     }
 
+    fs.writeFileSync(fcScriptPath, filterParts.join(';'))
     finalArgs.push(
-      '-filter_complex', filterParts.join(';'),
+      '-filter_complex_script', fcScriptPath,
       '-map', '[vout]',
       '-map', '[aout]',
       '-c:v', 'libx264', '-crf', String(crf), '-preset', 'medium',
+      '-pix_fmt', 'yuv420p',
       '-c:a', 'aac', '-ar', '44100',
       '-r', String(fps), '-y', outputPath,
     )
   } else if (muteVideoAudio || !concatHasAudio) {
     // No audio clips and either muting or no audio in video — export video only
+    fs.writeFileSync(vfScriptPath, vfFilterStr)
     finalArgs.push(
-      '-vf', vfFilterStr,
+      '-filter_script:v', vfScriptPath,
       '-c:v', 'libx264', '-crf', String(crf), '-preset', 'medium',
+      '-pix_fmt', 'yuv420p',
       '-an',
       '-r', String(fps), '-y', outputPath,
     )
   } else {
     // No audio clips, video has audio — pass it through
+    fs.writeFileSync(vfScriptPath, vfFilterStr)
     finalArgs.push(
-      '-vf', vfFilterStr,
+      '-filter_script:v', vfScriptPath,
       '-c:v', 'libx264', '-crf', String(crf), '-preset', 'medium',
+      '-pix_fmt', 'yuv420p',
       '-c:a', 'aac', '-ar', '44100',
       '-r', String(fps), '-y', outputPath,
     )
   }
 
-  await execFileAsync(ffmpegPath, finalArgs)
+  // Large maxBuffer: FFmpeg writes continuous progress to stderr during encoding.
+  // The default 1MB fills up for longer videos, deadlocking the process.
+  await execFileAsync(ffmpegPath, finalArgs, { maxBuffer: 500 * 1024 * 1024 })
 
   if (onProgress) onProgress(100)
 
@@ -356,4 +477,6 @@ export async function exportVideo(options: ExportJobOptions): Promise<void> {
   }
   fs.unlink(segmentListPath, () => {})
   fs.unlink(concatPath, () => {})
+  fs.unlink(vfScriptPath, () => {})
+  fs.unlink(fcScriptPath, () => {})
 }

@@ -166,43 +166,43 @@ export async function transcribeAudio(
   }
 }
 
-// Group words into caption lines based on pauses and max words per line
+// Group words into caption segments by natural pauses.
+// Visual line-breaking (how many words fit per display line) is handled at render
+// time based on font size, so segments can be long sentences.
 export function groupWordsIntoCaptions(
   words: TranscriptionWord[],
-  maxWords = 5,
-  maxGapSeconds = 0.5
-): Array<{ text: string; startTime: number; endTime: number }> {
+  maxGapSeconds = 0.6,
+  maxDurationSeconds = 12
+): Array<{ text: string; startTime: number; endTime: number; words: TranscriptionWord[] }> {
   if (words.length === 0) return []
 
-  const captions: Array<{ text: string; startTime: number; endTime: number }> = []
+  const captions: Array<{ text: string; startTime: number; endTime: number; words: TranscriptionWord[] }> = []
   let group: TranscriptionWord[] = []
+
+  const flush = (): void => {
+    if (group.length === 0) return
+    captions.push({
+      text: group.map((w) => w.word).join(' '),
+      startTime: group[0].start,
+      endTime: group[group.length - 1].end,
+      words: [...group],
+    })
+    group = []
+  }
 
   for (let i = 0; i < words.length; i++) {
     const word = words[i]
     const prev = words[i - 1]
-
     const gap = prev ? word.start - prev.end : 0
-    const shouldBreak = group.length >= maxWords || (group.length > 0 && gap > maxGapSeconds)
+    const groupDuration = group.length > 0 ? word.start - group[0].start : 0
 
-    if (shouldBreak && group.length > 0) {
-      captions.push({
-        text: group.map((w) => w.word).join(' '),
-        startTime: group[0].start,
-        endTime: group[group.length - 1].end,
-      })
-      group = []
+    if (group.length > 0 && (gap > maxGapSeconds || groupDuration > maxDurationSeconds)) {
+      flush()
     }
 
     group.push(word)
   }
 
-  if (group.length > 0) {
-    captions.push({
-      text: group.map((w) => w.word).join(' '),
-      startTime: group[0].start,
-      endTime: group[group.length - 1].end,
-    })
-  }
-
+  flush()
   return captions
 }

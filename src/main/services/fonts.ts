@@ -10,25 +10,29 @@ function getFontsDir(): string {
 }
 
 // Direct GitHub raw URLs for each font — reliable TTF delivery, no API tricks needed.
+// For variable fonts (bold: null), GitHub only has the variable file which FFmpeg renders at
+// the default weight axis — so bold=true skips GitHub and uses the CSS API instead, which
+// serves weight-specific static TTF instances (e.g. weight-700 Inter).
+// Fonts with separate static bold files use bold: string pointing to the *-Bold.ttf.
 const GH = 'https://raw.githubusercontent.com/google/fonts/main'
-const FONT_TTF_URLS: Record<string, { regular: string; bold: string }> = {
-  'Inter':            { regular: `${GH}/ofl/inter/static/Inter-Regular.ttf`,                        bold: `${GH}/ofl/inter/static/Inter-Bold.ttf` },
-  'Roboto':           { regular: `${GH}/ofl/roboto/Roboto-Regular.ttf`,                             bold: `${GH}/ofl/roboto/Roboto-Bold.ttf` },
-  'Open Sans':        { regular: `${GH}/ofl/opensans/static/OpenSans-Regular.ttf`,                  bold: `${GH}/ofl/opensans/static/OpenSans-Bold.ttf` },
-  'Montserrat':       { regular: `${GH}/ofl/montserrat/static/Montserrat-Regular.ttf`,              bold: `${GH}/ofl/montserrat/static/Montserrat-Bold.ttf` },
-  'Lato':             { regular: `${GH}/ofl/lato/Lato-Regular.ttf`,                                bold: `${GH}/ofl/lato/Lato-Bold.ttf` },
-  'Poppins':          { regular: `${GH}/ofl/poppins/Poppins-Regular.ttf`,                          bold: `${GH}/ofl/poppins/Poppins-Bold.ttf` },
-  'Raleway':          { regular: `${GH}/ofl/raleway/static/Raleway-Regular.ttf`,                    bold: `${GH}/ofl/raleway/static/Raleway-Bold.ttf` },
-  'Oswald':           { regular: `${GH}/ofl/oswald/static/Oswald-Regular.ttf`,                     bold: `${GH}/ofl/oswald/static/Oswald-Bold.ttf` },
-  'Nunito':           { regular: `${GH}/ofl/nunito/static/Nunito-Regular.ttf`,                     bold: `${GH}/ofl/nunito/static/Nunito-Bold.ttf` },
-  'Playfair Display': { regular: `${GH}/ofl/playfairdisplay/static/PlayfairDisplay-Regular.ttf`,   bold: `${GH}/ofl/playfairdisplay/static/PlayfairDisplay-Bold.ttf` },
-  'Ubuntu':           { regular: `${GH}/ufl/ubuntu/Ubuntu-R.ttf`,                                  bold: `${GH}/ufl/ubuntu/Ubuntu-B.ttf` },
-  'Bebas Neue':       { regular: `${GH}/ofl/bebasneuei/BebasNeuei-Regular.ttf`,                    bold: `${GH}/ofl/bebasneuei/BebasNeuei-Regular.ttf` },
-  'Anton':            { regular: `${GH}/ofl/anton/Anton-Regular.ttf`,                               bold: `${GH}/ofl/anton/Anton-Regular.ttf` },
-  'Dancing Script':   { regular: `${GH}/ofl/dancingscript/static/DancingScript-Regular.ttf`,       bold: `${GH}/ofl/dancingscript/static/DancingScript-Bold.ttf` },
-  'Pacifico':         { regular: `${GH}/ofl/pacifico/Pacifico-Regular.ttf`,                        bold: `${GH}/ofl/pacifico/Pacifico-Regular.ttf` },
-  'Merriweather':     { regular: `${GH}/ofl/merriweather/Merriweather-Regular.ttf`,                 bold: `${GH}/ofl/merriweather/Merriweather-Bold.ttf` },
-  'Quicksand':        { regular: `${GH}/ofl/quicksand/static/Quicksand-Regular.ttf`,               bold: `${GH}/ofl/quicksand/static/Quicksand-Bold.ttf` },
+const FONT_TTF_URLS: Record<string, { regular: string; bold: string | null }> = {
+  'Inter':            { regular: `${GH}/ofl/inter/Inter%5Bopsz%2Cwght%5D.ttf`,                          bold: null },
+  'Roboto':           { regular: `${GH}/ofl/roboto/Roboto%5Bwdth%2Cwght%5D.ttf`,                        bold: null },
+  'Open Sans':        { regular: `${GH}/ofl/opensans/OpenSans%5Bwdth%2Cwght%5D.ttf`,                    bold: null },
+  'Montserrat':       { regular: `${GH}/ofl/montserrat/Montserrat%5Bwght%5D.ttf`,                       bold: null },
+  'Lato':             { regular: `${GH}/ofl/lato/Lato-Regular.ttf`,                                     bold: `${GH}/ofl/lato/Lato-Bold.ttf` },
+  'Poppins':          { regular: `${GH}/ofl/poppins/Poppins-Regular.ttf`,                               bold: `${GH}/ofl/poppins/Poppins-Bold.ttf` },
+  'Raleway':          { regular: `${GH}/ofl/raleway/Raleway%5Bwght%5D.ttf`,                             bold: null },
+  'Oswald':           { regular: `${GH}/ofl/oswald/Oswald%5Bwght%5D.ttf`,                               bold: null },
+  'Nunito':           { regular: `${GH}/ofl/nunito/Nunito%5Bwght%5D.ttf`,                               bold: null },
+  'Playfair Display': { regular: `${GH}/ofl/playfairdisplay/PlayfairDisplay%5Bwght%5D.ttf`,             bold: null },
+  'Ubuntu':           { regular: `${GH}/ufl/ubuntu/Ubuntu-Regular.ttf`,                                 bold: `${GH}/ufl/ubuntu/Ubuntu-Bold.ttf` },
+  'Bebas Neue':       { regular: `${GH}/ofl/bebasneue/BebasNeue-Regular.ttf`,                           bold: `${GH}/ofl/bebasneue/BebasNeue-Regular.ttf` },
+  'Anton':            { regular: `${GH}/ofl/anton/Anton-Regular.ttf`,                                   bold: `${GH}/ofl/anton/Anton-Regular.ttf` },
+  'Dancing Script':   { regular: `${GH}/ofl/dancingscript/DancingScript%5Bwght%5D.ttf`,                 bold: null },
+  'Pacifico':         { regular: `${GH}/ofl/pacifico/Pacifico-Regular.ttf`,                             bold: `${GH}/ofl/pacifico/Pacifico-Regular.ttf` },
+  'Merriweather':     { regular: `${GH}/ofl/merriweather/Merriweather%5Bopsz%2Cwdth%2Cwght%5D.ttf`,    bold: null },
+  'Quicksand':        { regular: `${GH}/ofl/quicksand/Quicksand%5Bwght%5D.ttf`,                        bold: null },
 }
 
 const TIMEOUT_MS = 20000
@@ -116,10 +120,13 @@ export async function downloadGoogleFont(familyName: string, bold = false): Prom
     fs.unlinkSync(fontPath)
   }
 
-  // 1. Try GitHub raw URL first
+  // 1. Try GitHub raw URL first.
+  // Variable fonts (bold: null) only have a single file covering all weights — FFmpeg renders at
+  // the default axis weight regardless of which file you load, so there's no point using GitHub
+  // for bold; fall straight through to the CSS API which serves static weight-specific TTFs.
   const ghEntry = FONT_TTF_URLS[familyName]
-  if (ghEntry) {
-    const ghUrl = bold ? ghEntry.bold : ghEntry.regular
+  const ghUrl = ghEntry ? (bold ? ghEntry.bold : ghEntry.regular) : null
+  if (ghUrl) {
     try {
       console.log(`[fonts] Downloading ${familyName} ${weight} from GitHub: ${ghUrl}`)
       await downloadBinaryFile(ghUrl, fontPath)
@@ -134,13 +141,16 @@ export async function downloadGoogleFont(familyName: string, bold = false): Prom
       console.warn(`[fonts] GitHub download failed for "${familyName}":`, e)
     }
   } else {
-    console.warn(`[fonts] No GitHub URL mapped for "${familyName}", trying CSS API`)
+    console.log(`[fonts] No static GitHub URL for "${familyName}" bold=${bold}, using CSS API`)
   }
 
-  // 2. Fall back to Google Fonts CSS API with old user-agent
+  // 2. Fall back to Google Fonts CSS API.
+  // Must use an old Android/BlackBerry user-agent — these get format('truetype') .ttf URLs.
+  // IE user-agents (MSIE 5/6) return format('embedded-opentype') EOT which FreeType cannot read.
+  // Modern user-agents return WOFF2 which requires brotli decompression not available in drawtext.
   const userAgents = [
-    'Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)',
-    'Mozilla/5.0 (compatible; MSIE 5.0; Windows 98)',
+    'Mozilla/5.0 (Linux; U; Android 2.2; en-us; Nexus One Build/FRF91) AppleWebKit/533.1 (KHTML, like Gecko) Version/4.0 Mobile Safari/533.1',
+    'BlackBerry9700/5.0.0.862 Profile/MIDP-2.1 Configuration/CLDC-1.1 VendorID/167',
   ]
   const cssApis = [
     `https://fonts.googleapis.com/css2?family=${encodeURIComponent(familyName)}:wght@${weight}&display=swap`,

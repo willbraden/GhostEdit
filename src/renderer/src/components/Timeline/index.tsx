@@ -1,6 +1,6 @@
 import React, { useRef, useCallback, useEffect, useState } from 'react'
 import { useProjectStore } from '../../store/project'
-import type { Clip, Asset, Caption, Effect } from '../../types/project'
+import type { Clip, Asset, Caption, Effect, PixelateParams, DuotoneParams } from '../../types/project'
 import styles from './Timeline.module.css'
 
 const TRACK_HEIGHT = 56
@@ -282,15 +282,21 @@ function EffectBlock({ effect, zoom, isSelected, onSelect, onDragMove, onTrimLef
     window.addEventListener('mouseup', onUp)
   }
 
+  const isDuotone = effect.type === 'duotone'
+
   return (
     <div
-      className={`${styles.effectBlock} ${isSelected ? styles.effectBlockSelected : ''}`}
+      className={[
+        styles.effectBlock,
+        isDuotone ? styles.effectBlockDuotone : '',
+        isSelected ? (isDuotone ? styles.effectBlockDuotoneSelected : styles.effectBlockSelected) : '',
+      ].join(' ')}
       style={{ left, width }}
       onMouseDown={handleMouseDownMove}
       onClick={(e) => e.stopPropagation()}
     >
       <div className={styles.clipTrimHandle} onMouseDown={makeTrimHandler('left')} />
-      <div className={styles.effectBlockLabel}>Pixelate</div>
+      <div className={styles.effectBlockLabel}>{isDuotone ? 'Duotone' : 'Pixelate'}</div>
       <div className={`${styles.clipTrimHandle} ${styles.clipTrimRight}`} onMouseDown={makeTrimHandler('right')} />
     </div>
   )
@@ -616,6 +622,17 @@ export function Timeline() {
     setEffectsMenu(null)
   }
 
+  const insertDuotoneEffect = (): void => {
+    if (!effectsMenu) return
+    addEffect({
+      type: 'duotone',
+      timelineStart: effectsMenu.time,
+      timelineEnd: effectsMenu.time + 5,
+      params: { shadowColor: '#c0143c', highlightColor: '#1ed760' },
+    })
+    setEffectsMenu(null)
+  }
+
   const handleEffectDragMove = useCallback(
     (effectId: string, newStart: number, newEnd: number) => {
       updateEffect(effectId, { timelineStart: newStart, timelineEnd: newEnd })
@@ -908,29 +925,57 @@ export function Timeline() {
       {selectedEffectId && (() => {
         const eff = (project.effects ?? []).find((e) => e.id === selectedEffectId)
         if (!eff) return null
-        return (
-          <div className={styles.effectParamsPanel}>
-            <span>Pixelate</span>
-            <label>
-              Start
-              <input
-                type="range" min={2} max={64}
-                value={eff.params.startBlockSize}
-                onChange={(e) => updateEffect(eff.id, { params: { ...eff.params, startBlockSize: +e.target.value } })}
-              />
-              {eff.params.startBlockSize}px
-            </label>
-            <label>
-              End
-              <input
-                type="range" min={2} max={64}
-                value={eff.params.endBlockSize}
-                onChange={(e) => updateEffect(eff.id, { params: { ...eff.params, endBlockSize: +e.target.value } })}
-              />
-              {eff.params.endBlockSize}px
-            </label>
-          </div>
-        )
+        if (eff.type === 'pixelate') {
+          const p = eff.params as PixelateParams
+          return (
+            <div className={styles.effectParamsPanel}>
+              <span>Pixelate</span>
+              <label>
+                Start
+                <input
+                  type="range" min={2} max={64}
+                  value={p.startBlockSize}
+                  onChange={(e) => updateEffect(eff.id, { params: { ...p, startBlockSize: +e.target.value } })}
+                />
+                {p.startBlockSize}px
+              </label>
+              <label>
+                End
+                <input
+                  type="range" min={2} max={64}
+                  value={p.endBlockSize}
+                  onChange={(e) => updateEffect(eff.id, { params: { ...p, endBlockSize: +e.target.value } })}
+                />
+                {p.endBlockSize}px
+              </label>
+            </div>
+          )
+        }
+        if (eff.type === 'duotone') {
+          const p = eff.params as DuotoneParams
+          return (
+            <div className={`${styles.effectParamsPanel} ${styles.effectParamsPanelDuotone}`}>
+              <span>Duotone</span>
+              <label>
+                Shadow
+                <input
+                  type="color"
+                  value={p.shadowColor}
+                  onChange={(e) => updateEffect(eff.id, { params: { ...p, shadowColor: e.target.value } })}
+                />
+              </label>
+              <label>
+                Highlight
+                <input
+                  type="color"
+                  value={p.highlightColor}
+                  onChange={(e) => updateEffect(eff.id, { params: { ...p, highlightColor: e.target.value } })}
+                />
+              </label>
+            </div>
+          )
+        }
+        return null
       })()}
 
       {/* Clip right-click context menu */}
@@ -974,6 +1019,12 @@ export function Timeline() {
             onClick={insertPixelateEffect}
           >
             Insert Pixelate
+          </button>
+          <button
+            style={{ display: 'block', width: '100%', padding: '6px 14px', background: 'none', border: 'none', color: '#e8a0ff', cursor: 'pointer', fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' }}
+            onClick={insertDuotoneEffect}
+          >
+            Insert Duotone
           </button>
         </div>
       )}

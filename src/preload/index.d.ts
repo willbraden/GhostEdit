@@ -8,10 +8,17 @@ interface MediaMetadata {
   thumbnailPath?: string
 }
 
+interface CaptionWord {
+  word: string
+  start: number
+  end: number
+}
+
 interface CaptionRaw {
   text: string
   startTime: number
   endTime: number
+  words?: CaptionWord[]
 }
 
 interface Api {

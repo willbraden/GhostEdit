@@ -1,7 +1,116 @@
 import { useState, useEffect } from 'react'
 import { useProjectStore } from '../../store/project'
-import type { AspectRatio } from '../../types/project'
+import type { AspectRatio, Caption, CaptionWord, ExportEffect, PixelateParams, DuotoneParams } from '../../types/project'
 import styles from './ExportDialog.module.css'
+
+interface WordOffset {
+  word: string
+  start: number
+  end: number
+  xOffset: number   // px from left edge of the rendered line
+  yAdjustPx: number // px to shift word DOWN so its baseline matches the full-line baseline
+}
+
+interface LineCaptionData {
+  text: string
+  startTime: number
+  endTime: number
+  style: Caption['style']
+  lineWidthPx: number
+  wordOffsets: WordOffset[]
+}
+
+// Pre-compute visual line breaks + per-word x-offsets at export resolution.
+// Mirrors the Preview's computeVisualLines so positions match what the viewer sees.
+async function computeExportCaptions(captions: Caption[], exportWidth: number, exportHeight: number): Promise<LineCaptionData[]> {
+  const referenceWidth = exportWidth > exportHeight ? 1920 : 1080
+  const fontScale = exportWidth / referenceWidth
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')!
+  const maxLineW = exportWidth * 0.85
+  const result: LineCaptionData[] = []
+
+  // Track font specs we've already awaited so we don't await the same one repeatedly
+  const loadedFontSpecs = new Set<string>()
+
+  for (const cap of captions) {
+    if (!cap.words || cap.words.length === 0) {
+      result.push({ text: cap.text, startTime: cap.startTime, endTime: cap.endTime, style: cap.style, lineWidthPx: 0, wordOffsets: [] })
+      continue
+    }
+
+    const scaledSize = Math.round((cap.style.fontSize || 32) * fontScale)
+    const family = cap.style.fontFamily ? `"${cap.style.fontFamily}", Arial, sans-serif` : 'Arial, sans-serif'
+    const fontSpec = `${cap.style.bold ? 'bold ' : ''}${scaledSize}px ${family}`
+
+    // Ensure the font is actually loaded in the browser before measuring.
+    // If we skip this, measureText silently falls back to Arial/Times and all
+    // x-offsets are computed with the wrong font — causing misaligned highlights.
+    if (!loadedFontSpecs.has(fontSpec)) {
+      try {
+        await document.fonts.load(fontSpec)
+      } catch {
+        // Best-effort; measurement will use whatever fallback the browser has
+      }
+      loadedFontSpecs.add(fontSpec)
+    }
+
+    ctx.font = fontSpec
+    const spaceW = ctx.measureText(' ').width
+
+    const lines: CaptionWord[][] = []
+    let line: CaptionWord[] = []
+    let lineW = 0
+
+    for (const word of cap.words) {
+      const ww = ctx.measureText(word.word).width
+      const needed = line.length > 0 ? spaceW + ww : ww
+      if (line.length > 0 && lineW + needed > maxLineW) {
+        lines.push(line)
+        line = [word]
+        lineW = ww
+      } else {
+        line.push(word)
+        lineW += needed
+      }
+    }
+    if (line.length > 0) lines.push(line)
+
+    for (const l of lines) {
+      const lineText = l.map((w) => w.word).join(' ')
+      // Measure the full line as a single string so lineWidthPx matches FFmpeg's
+      // text_w for the same string, and measure prefix strings for each word's
+      // xOffset so kerning at word boundaries is accounted for.
+      const lineMetrics = ctx.measureText(lineText)
+      const lineWidthPx = Math.round(lineMetrics.width)
+      // Full-line ascent (baseline → top of tallest glyph in the line).
+      // FreeType positions text at y = top-of-bounding-box. Words with only x-height
+      // characters have a smaller ascender than words with capitals/ascenders, so they
+      // sit too high when all words share the same y. We shift each word down by
+      // (lineAscent - wordAscent) so every word's baseline lands at the same pixel.
+      const lineAscent = lineMetrics.actualBoundingBoxAscent
+      const wordOffsets: WordOffset[] = []
+      for (let wi = 0; wi < l.length; wi++) {
+        const prefix = wi === 0 ? '' : l.slice(0, wi).map((w) => w.word).join(' ') + ' '
+        const xOffset = Math.round(ctx.measureText(prefix).width)
+        const wordAscent = ctx.measureText(l[wi].word).actualBoundingBoxAscent
+        const yAdjustPx = Math.round(lineAscent - wordAscent)
+        wordOffsets.push({ word: l[wi].word, start: l[wi].start, end: l[wi].end, xOffset, yAdjustPx })
+      }
+
+      result.push({
+        text: lineText,
+        startTime: l[0].start,
+        endTime: l[l.length - 1].end,
+        style: cap.style,
+        lineWidthPx,
+        wordOffsets,
+      })
+    }
+  }
+
+  return result
+}
 
 interface Props {
   onClose: () => void
@@ -81,7 +190,9 @@ export function ExportDialog({ onClose }: Props) {
           }
         })
 
-      const captions = project.captions.map((c) => ({
+      // Break captions into visual lines at export resolution (same logic as Preview)
+      const lineCaptions = await computeExportCaptions(project.captions, res.width, res.height)
+      const captions = lineCaptions.map((c) => ({
         text: c.text,
         startTime: c.startTime,
         endTime: c.endTime,
@@ -93,15 +204,22 @@ export function ExportDialog({ onClose }: Props) {
         fontFamily: c.style.fontFamily,
         strokeWidth: c.style.strokeWidth,
         strokeColor: c.style.strokeColor,
+        highlightColor: c.style.highlightColor,
+        lineWidthPx: c.lineWidthPx,
+        words: c.wordOffsets.length > 0
+          ? c.wordOffsets.map((w) => ({ word: w.word, startTime: w.start, endTime: w.end, xOffset: w.xOffset, yAdjustPx: w.yAdjustPx }))
+          : undefined,
       }))
 
-      const effects = (project.effects ?? []).map((e) => ({
-        type: e.type,
-        timelineStart: e.timelineStart,
-        timelineEnd: e.timelineEnd,
-        startBlockSize: e.params.startBlockSize,
-        endBlockSize: e.params.endBlockSize,
-      }))
+      const effects: ExportEffect[] = (project.effects ?? []).map((e) => {
+        if (e.type === 'pixelate') {
+          const p = e.params as PixelateParams
+          return { type: 'pixelate', timelineStart: e.timelineStart, timelineEnd: e.timelineEnd, startBlockSize: p.startBlockSize, endBlockSize: p.endBlockSize }
+        } else {
+          const p = e.params as DuotoneParams
+          return { type: 'duotone', timelineStart: e.timelineStart, timelineEnd: e.timelineEnd, shadowColor: p.shadowColor, highlightColor: p.highlightColor }
+        }
+      })
 
       await window.api.exportVideo({
         clips,
