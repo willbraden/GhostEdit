@@ -130,6 +130,9 @@ export interface ExportAudioClip {
 export type ExportEffect =
   | { type: 'pixelate'; timelineStart: number; timelineEnd: number; startBlockSize: number; endBlockSize: number }
   | { type: 'duotone';  timelineStart: number; timelineEnd: number; shadowColor: string; highlightColor: string }
+  | { type: 'ascii'; timelineStart: number; timelineEnd: number; cellSize: number; contrast: number }
+  | { type: 'dither'; timelineStart: number; timelineEnd: number; levels: number; amount: number }
+  | { type: 'chromatic_aberration'; timelineStart: number; timelineEnd: number; offsetPx: number }
 
 export interface ExportJobOptions {
   clips: ExportClip[]
@@ -142,20 +145,61 @@ export interface ExportJobOptions {
   height: number
   fps: number
   crf: number
+  debug?: boolean
   onProgress?: (percent: number) => void
 }
 
-export async function exportVideo(options: ExportJobOptions): Promise<void> {
-  const { clips, audioClips, muteVideoAudio, captions, effects, outputPath, width, height, fps, crf, onProgress } = options
+export interface ExportResult {
+  debugBundlePath?: string
+}
+
+export async function exportVideo(options: ExportJobOptions): Promise<ExportResult> {
+  const { clips, audioClips, muteVideoAudio, captions, effects, outputPath, width, height, fps, crf, debug, onProgress } = options
 
   if (clips.length === 0) {
     throw new Error('No clips to export')
   }
 
+  const debugEnabled = Boolean(debug)
+  const outputDir = path.dirname(outputPath)
+  const outputBaseName = path.basename(outputPath, path.extname(outputPath))
+  const debugDir = debugEnabled
+    ? path.join(outputDir, `${outputBaseName}_debug_${Date.now()}`)
+    : undefined
+  if (debugDir) fs.mkdirSync(debugDir, { recursive: true })
+
   // Resolve the real long path — os.tmpdir() can return 8.3 short names on Windows
   // (e.g. WILLBR~1 instead of willbraden) which FFmpeg's concat demuxer may not resolve.
-  const tmpDir = fs.realpathSync(os.tmpdir())
+  const tmpDir = debugDir ?? fs.realpathSync(os.tmpdir())
   const segmentListPath = path.join(tmpDir, 've_segments.txt')
+  const debugLogPath = debugDir ? path.join(debugDir, 'ffmpeg-debug.log') : null
+  const appendDebug = (label: string, payload: string): void => {
+    if (!debugLogPath) return
+    fs.appendFileSync(debugLogPath, `\n\n=== ${label} ===\n${payload}\n`)
+  }
+  const toText = (v: string | Buffer | undefined): string => {
+    if (!v) return ''
+    return typeof v === 'string' ? v : v.toString('utf8')
+  }
+  const runFfmpeg = async (label: string, args: string[], extra: Parameters<typeof execFileAsync>[2] = {}): Promise<{ stdout: string; stderr: string }> => {
+    appendDebug(`${label} command`, `${ffmpegPath} ${args.join(' ')}`)
+    try {
+      const res = await execFileAsync(ffmpegPath, args, extra)
+      const stdout = toText(res.stdout)
+      const stderr = toText(res.stderr)
+      if (stdout) appendDebug(`${label} stdout`, stdout)
+      if (stderr) appendDebug(`${label} stderr`, stderr)
+      return { stdout, stderr }
+    } catch (e) {
+      const err = e as { message?: string; stdout?: string | Buffer; stderr?: string | Buffer }
+      const stdout = toText(err.stdout)
+      const stderr = toText(err.stderr)
+      if (stdout) appendDebug(`${label} stdout`, stdout)
+      if (stderr) appendDebug(`${label} stderr`, stderr)
+      appendDebug(`${label} error`, err.message ?? String(e))
+      throw e
+    }
+  }
 
   // Build individual trimmed segments then concat
   const segmentPaths: string[] = []
@@ -166,18 +210,17 @@ export async function exportVideo(options: ExportJobOptions): Promise<void> {
     segmentPaths.push(segPath)
     const duration = Math.max(0.01, clip.sourceEnd - clip.sourceStart)
 
-    await execFileAsync(ffmpegPath, [
+    await runFfmpeg(`segment-${i}`, [
       '-ss', String(clip.sourceStart),
       '-i', clip.filePath,
       '-t', String(duration),
-      '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1`,
+      '-vf', `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1`,
       '-c:v', 'libx264',
       '-crf', '18',
       '-preset', 'fast',
       '-fps_mode', 'cfr',
       '-r', String(fps),
-      '-c:a', 'aac',
-      '-ar', '44100',
+      '-an',
       '-y',
       segPath,
     ]).catch((e: Error) => {
@@ -197,7 +240,7 @@ export async function exportVideo(options: ExportJobOptions): Promise<void> {
 
   const concatPath = path.join(tmpDir, 've_concat.mp4')
 
-  await execFileAsync(ffmpegPath, [
+  await runFfmpeg('concat', [
     '-f', 'concat',
     '-safe', '0',
     '-i', segmentListPath,
@@ -384,28 +427,79 @@ export async function exportVideo(options: ExportJobOptions): Promise<void> {
       ]
     })
 
-  const allVfFilters = [...pixelizeFilters, ...duotoneFilters, ...drawtextFilters]
+  // Build ASCII-like filters: pixelate + grayscale + contrast.
+  // Uses pixelize (which supports enable=) instead of scale (which does not).
+  type AsciiExport = Extract<ExportEffect, { type: 'ascii' }>
+  const asciiFilters = (effects ?? [])
+    .filter((e): e is AsciiExport => e.type === 'ascii' && e.timelineEnd > e.timelineStart)
+    .flatMap((e) => {
+      const TS = e.timelineStart.toFixed(4)
+      const TE = e.timelineEnd.toFixed(4)
+      const cell = Math.max(4, Math.min(20, Math.round(e.cellSize)))
+      const c = Math.max(0.5, Math.min(2.0, e.contrast))
+      return [
+        `pixelize=width=${cell}:height=${cell}:enable=between(t\\,${TS}\\,${TE})`,
+        `hue=s=0:enable=between(t\\,${TS}\\,${TE})`,
+        `eq=contrast=${c.toFixed(3)}:enable=between(t\\,${TS}\\,${TE})`,
+      ]
+    })
+
+  // Build dither-like filters via noise + RGB quantization.
+  type DitherExport = Extract<ExportEffect, { type: 'dither' }>
+  const ditherFilters = (effects ?? [])
+    .filter((e): e is DitherExport => e.type === 'dither' && e.timelineEnd > e.timelineStart)
+    .flatMap((e) => {
+      const TS = e.timelineStart.toFixed(4)
+      const TE = e.timelineEnd.toFixed(4)
+      const lv = Math.max(2, Math.min(16, Math.round(e.levels)))
+      const step = Math.max(1, Math.round(255 / (lv - 1)))
+      const amount = Math.max(0, Math.min(1, e.amount))
+      const noise = Math.round(6 + amount * 34)
+      const en = `enable=between(t\\,${TS}\\,${TE})`
+      return [
+        `noise=alls=${noise}:allf=t+u:${en}`,
+        `lutrgb=r=trunc(val/${step})*${step}:g=trunc(val/${step})*${step}:b=trunc(val/${step})*${step}:${en}`,
+      ]
+    })
+
+  // Build chromatic aberration filters via RGB plane shifts.
+  type ChromaticExport = Extract<ExportEffect, { type: 'chromatic_aberration' }>
+  const chromaticFilters = (effects ?? [])
+    .filter((e): e is ChromaticExport => e.type === 'chromatic_aberration' && e.timelineEnd > e.timelineStart)
+    .map((e) => {
+      const TS = e.timelineStart.toFixed(4)
+      const TE = e.timelineEnd.toFixed(4)
+      const off = Math.max(0, Math.min(20, Math.round(e.offsetPx)))
+      return `rgbashift=rh=${off}:rv=0:gh=0:gv=0:bh=-${off}:bv=0:enable=between(t\\,${TS}\\,${TE})`
+    })
+
+  const allVfFilters = [
+    ...pixelizeFilters,
+    ...ditherFilters,
+    ...duotoneFilters,
+    ...asciiFilters,
+    ...chromaticFilters,
+    ...drawtextFilters,
+  ]
   const vfFilterStr = allVfFilters.length > 0 ? allVfFilters.join(',') : 'null'
-  const hasAudioClips = audioClips.length > 0
-
-  // Write filter strings to temp files to avoid ENAMETOOLONG on Windows.
-  // With per-word karaoke drawtext filters the inline argument can exceed Windows' ~32KB limit.
-  const vfScriptPath = path.join(tmpDir, 've_vf_script.txt')
-  const fcScriptPath = path.join(tmpDir, 've_fc_script.txt')
-
-  // Check whether the concatenated video actually has an audio stream.
-  // Video-only clips produce a concat with no audio, so referencing [0:a] in
-  // filter_complex would cause FFmpeg to fail. We probe once and skip [0:a]
-  // if there is nothing to mix in from the video side.
-  const concatHasAudio = await execFileAsync(ffmpegPath, ['-i', concatPath], { env: process.env })
-    .catch((e: { stderr?: string }) => ({ stderr: (e.stderr ?? '') as string }))
-    .then((r) => r.stderr.includes('Audio:'))
+  const includeVideoAudio = !muteVideoAudio
+  const timelineVideoAudioClips: ExportAudioClip[] = includeVideoAudio
+    ? clips.map((c) => ({
+      filePath: c.filePath,
+      sourceStart: c.sourceStart,
+      sourceEnd: c.sourceEnd,
+      timelineStart: c.timelineStart,
+      timelineEnd: c.timelineEnd,
+    }))
+    : []
+  const allTimedAudioClips: ExportAudioClip[] = [...timelineVideoAudioClips, ...audioClips]
+  const hasAnyTimedAudio = allTimedAudioClips.length > 0
 
   const finalArgs: string[] = ['-i', concatPath]
 
-  if (hasAudioClips) {
-    // Add each audio clip as a trimmed input
-    for (const ac of audioClips) {
+  if (hasAnyTimedAudio) {
+    // Add each timed audio source (video clip audio + explicit audio track clips) as a trimmed input.
+    for (const ac of allTimedAudioClips) {
       const dur = ac.sourceEnd - ac.sourceStart
       finalArgs.push('-ss', String(ac.sourceStart), '-t', String(dur), '-i', ac.filePath)
     }
@@ -415,27 +509,23 @@ export async function exportVideo(options: ExportJobOptions): Promise<void> {
     filterParts.push(`[0:v]${vfFilterStr}[vout]`)
 
     const audioLabels: string[] = []
-    for (let i = 0; i < audioClips.length; i++) {
-      const delayMs = Math.round(audioClips[i].timelineStart * 1000)
+    for (let i = 0; i < allTimedAudioClips.length; i++) {
+      const delayMs = Math.round(allTimedAudioClips[i].timelineStart * 1000)
       const label = `[a${i}]`
       filterParts.push(`[${i + 1}:a]adelay=${delayMs}|${delayMs}${label}`)
       audioLabels.push(label)
     }
 
-    // Only include [0:a] if the concat actually has an audio stream
-    const includeVideoAudio = !muteVideoAudio && concatHasAudio
-    const mixInputs = includeVideoAudio ? ['[0:a]', ...audioLabels] : audioLabels
-    if (mixInputs.length === 1) {
-      filterParts.push(`${mixInputs[0]}anull[aout]`)
+    if (audioLabels.length === 1) {
+      filterParts.push(`${audioLabels[0]}anull[aout]`)
     } else {
       filterParts.push(
-        `${mixInputs.join('')}amix=inputs=${mixInputs.length}:normalize=0:dropout_transition=0[aout]`
+        `${audioLabels.join('')}amix=inputs=${audioLabels.length}:normalize=0:dropout_transition=0[aout]`
       )
     }
 
-    fs.writeFileSync(fcScriptPath, filterParts.join(';'))
     finalArgs.push(
-      '-filter_complex_script', fcScriptPath,
+      '-filter_complex', filterParts.join(';'),
       '-map', '[vout]',
       '-map', '[aout]',
       '-c:v', 'libx264', '-crf', String(crf), '-preset', 'medium',
@@ -443,40 +533,35 @@ export async function exportVideo(options: ExportJobOptions): Promise<void> {
       '-c:a', 'aac', '-ar', '44100',
       '-r', String(fps), '-y', outputPath,
     )
-  } else if (muteVideoAudio || !concatHasAudio) {
-    // No audio clips and either muting or no audio in video — export video only
-    fs.writeFileSync(vfScriptPath, vfFilterStr)
+  } else {
+    // No audio requested/available — export video only.
     finalArgs.push(
-      '-filter_script:v', vfScriptPath,
+      '-vf', vfFilterStr,
       '-c:v', 'libx264', '-crf', String(crf), '-preset', 'medium',
       '-pix_fmt', 'yuv420p',
       '-an',
-      '-r', String(fps), '-y', outputPath,
-    )
-  } else {
-    // No audio clips, video has audio — pass it through
-    fs.writeFileSync(vfScriptPath, vfFilterStr)
-    finalArgs.push(
-      '-filter_script:v', vfScriptPath,
-      '-c:v', 'libx264', '-crf', String(crf), '-preset', 'medium',
-      '-pix_fmt', 'yuv420p',
-      '-c:a', 'aac', '-ar', '44100',
       '-r', String(fps), '-y', outputPath,
     )
   }
 
   // Large maxBuffer: FFmpeg writes continuous progress to stderr during encoding.
   // The default 1MB fills up for longer videos, deadlocking the process.
-  await execFileAsync(ffmpegPath, finalArgs, { maxBuffer: 500 * 1024 * 1024 })
+  await runFfmpeg('final-export', finalArgs, { maxBuffer: 500 * 1024 * 1024 })
 
   if (onProgress) onProgress(100)
 
   // Cleanup temp files
-  for (const seg of segmentPaths) {
-    fs.unlink(seg, () => {})
+  if (!debugEnabled) {
+    for (const seg of segmentPaths) {
+      fs.unlink(seg, () => {})
+    }
+    fs.unlink(segmentListPath, () => {})
+    fs.unlink(concatPath, () => {})
   }
-  fs.unlink(segmentListPath, () => {})
-  fs.unlink(concatPath, () => {})
-  fs.unlink(vfScriptPath, () => {})
-  fs.unlink(fcScriptPath, () => {})
+
+  if (debugLogPath) {
+    appendDebug('summary', `output=${outputPath}\nwidth=${width}\nheight=${height}\nfps=${fps}\ncrf=${crf}\nsegments=${segmentPaths.length}\nvideoAudioInputs=${timelineVideoAudioClips.length}\naudioTrackInputs=${audioClips.length}`)
+  }
+
+  return { debugBundlePath: debugDir }
 }
