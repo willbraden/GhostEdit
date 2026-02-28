@@ -41,7 +41,7 @@ function scriptToSegments(text: string): ScriptSegment[] {
 export function AiBRollDialog({ onClose }: Props) {
   const { project, totalDuration, addAsset, addClip } = useProjectStore()
 
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('anthropic_api_key') ?? '')
+  const [apiKey] = useState(() => localStorage.getItem('anthropic_api_key') ?? '')
   const [clipsFolder, setClipsFolder] = useState('')
   const [script, setScript] = useState('')
   const [useCaptions, setUseCaptions] = useState(true)
@@ -75,14 +75,13 @@ export function AiBRollDialog({ onClose }: Props) {
   }
 
   const handleMatch = async (): Promise<void> => {
-    if (!apiKey.trim()) { setError('API key is required'); return }
+    if (!apiKey.trim()) { setError('No API key set — add one in Settings (⚙)'); return }
     if (!clipsFolder.trim()) { setError('Clips folder is required'); return }
     if (!useCaptions && !script.trim()) { setError('Script text is required'); return }
 
     const segments = getSegments()
     if (segments.length === 0) { setError('No script segments to process'); return }
 
-    localStorage.setItem('anthropic_api_key', apiKey)
     setError('')
     setMatches(null)
     setRunning(true)
@@ -189,18 +188,17 @@ export function AiBRollDialog({ onClose }: Props) {
         </div>
 
         <div className={styles.body}>
-          {/* API Key */}
-          <div className={styles.field}>
-            <label className={styles.label}>Anthropic API Key</label>
-            <input
-              type="password"
-              className={styles.input}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="sk-ant-..."
-              disabled={running}
-            />
-          </div>
+          {/* API Key status */}
+          {apiKey ? (
+            <div className={styles.apiKeyBadge}>
+              <span className={styles.apiKeyDot} />
+              API key configured
+            </div>
+          ) : (
+            <div className={styles.apiKeyMissing}>
+              No API key set — add one in <strong>Settings (⚙)</strong>
+            </div>
+          )}
 
           {/* Clips Folder */}
           <div className={styles.field}>
