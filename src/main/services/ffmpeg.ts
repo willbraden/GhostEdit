@@ -7,7 +7,7 @@ import * as os from 'os'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ffmpegPath: string = require('ffmpeg-static')
 
-import { resolveFontPath } from './fonts'
+import { resolveFontPath, getFontsDir } from './fonts'
 
 const execFileAsync = promisify(execFile)
 
@@ -153,6 +153,108 @@ export interface ExportResult {
   debugBundlePath?: string
 }
 
+// ── ASS subtitle helpers ──────────────────────────────────────────────────────
+
+function toASSTime(s: number): string {
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = Math.floor(s % 60)
+  const cs = Math.floor((s % 1) * 100)
+  return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
+}
+
+// Convert a color in various formats to ASS &HAABBGGRR (alpha 0=opaque, FF=transparent).
+function toASSColor(color: string, forceAlpha?: number): string {
+  let r = 255, g = 255, b = 255, a = 1.0
+  const rgbaM = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/)
+  if (rgbaM) {
+    r = parseInt(rgbaM[1]); g = parseInt(rgbaM[2]); b = parseInt(rgbaM[3])
+    a = rgbaM[4] !== undefined ? parseFloat(rgbaM[4]) : 1
+  } else if (/^#[0-9a-fA-F]{6}/.test(color)) {
+    r = parseInt(color.slice(1, 3), 16); g = parseInt(color.slice(3, 5), 16); b = parseInt(color.slice(5, 7), 16)
+  } else if (color === 'white') { r = g = b = 255 }
+  else if (color === 'black') { r = g = b = 0 }
+  else if (color.startsWith('black@')) { r = g = b = 0; a = parseFloat(color.slice(6)) }
+  else if (color === 'transparent') { a = 0 }
+  if (forceAlpha !== undefined) a = forceAlpha
+  const aa = Math.round((1 - Math.max(0, Math.min(1, a))) * 255)
+  const hex2 = (n: number): string => Math.round(n).toString(16).padStart(2, '0').toUpperCase()
+  return `&H${hex2(aa)}${hex2(b)}${hex2(g)}${hex2(r)}`
+}
+
+function escapeASSText(text: string): string {
+  return text.replace(/\{/g, '\\{').replace(/\}/g, '\\}').replace(/\n/g, '\\N')
+}
+
+function buildASSFile(
+  captions: ExportCaption[],
+  width: number,
+  height: number,
+  fontScale: number,
+): string {
+  const lines: string[] = [
+    '[Script Info]',
+    'ScriptType: v4.00+',
+    `PlayResX: ${width}`,
+    `PlayResY: ${height}`,
+    'WrapStyle: 0',
+    'ScaledBorderAndShadow: yes',
+    '',
+    '[V4+ Styles]',
+    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+  ]
+
+  // One style per caption to carry per-caption visual settings.
+  for (let i = 0; i < captions.length; i++) {
+    const cap = captions[i]
+    const fontsize = Math.max(8, Math.round((cap.fontSize || 32) * fontScale))
+    const bold = cap.bold ? -1 : 0
+    const fontname = (cap.fontFamily || 'Arial').replace(/,/g, '')
+    const primary = toASSColor(cap.color || 'white', 1.0)
+    // SecondaryColour is the "before-karaoke-sweep" colour — set to highlight so the word
+    // sweeps from highlightColor → primaryColor as it's spoken (closest match to preview).
+    const secondary = cap.highlightColor ? toASSColor(cap.highlightColor, 1.0) : primary
+    const strokeW = Math.round((cap.strokeWidth || 0) * fontScale)
+    const outlineColor = strokeW > 0 ? toASSColor(cap.strokeColor || '#000000', 1.0) : '&H00000000'
+    const isTransparentBg = !cap.background
+      || cap.background === 'transparent'
+      || cap.background.endsWith('@0')
+      || cap.background.endsWith('@0.0')
+    const borderStyle = isTransparentBg ? 1 : 3
+    const backColor = isTransparentBg ? '&H00000000' : toASSColor(cap.background!)
+    const outline = isTransparentBg ? strokeW : 0
+    // Alignment 8 = top-center; exact position set per-event via \pos()
+    lines.push(
+      `Style: Cap_${i},${fontname},${fontsize},${primary},${secondary},${outlineColor},${backColor},` +
+      `${bold},0,0,0,100,100,0,0,${borderStyle},${outline},0,8,10,10,10,1`
+    )
+  }
+
+  lines.push('', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text')
+
+  for (let i = 0; i < captions.length; i++) {
+    const cap = captions[i]
+    const textX = Math.round(width / 2)
+    const textY = Math.round((cap.positionY || 85) * height / 100)
+    const pos = `{\\pos(${textX},${textY})}`
+
+    let text: string
+    if (cap.words && cap.words.length > 0 && cap.highlightColor) {
+      // Karaoke: \kf sweeps SecondaryColour→PrimaryColour over each word's duration.
+      const parts = cap.words
+        .map((w) => `{\\kf${Math.max(1, Math.round((w.endTime - w.startTime) * 100))}}${escapeASSText(w.word)}`)
+        .join(' ')
+      text = pos + parts
+    } else {
+      text = pos + escapeASSText(cap.text)
+    }
+
+    lines.push(`Dialogue: 0,${toASSTime(cap.startTime)},${toASSTime(cap.endTime)},Cap_${i},,0,0,0,,${text}`)
+  }
+
+  return lines.join('\n')
+}
+
 export async function exportVideo(options: ExportJobOptions): Promise<ExportResult> {
   const { clips, audioClips, muteVideoAudio, captions, effects, outputPath, width, height, fps, crf, debug, onProgress } = options
 
@@ -251,135 +353,37 @@ export async function exportVideo(options: ExportJobOptions): Promise<ExportResu
 
   if (onProgress) onProgress(70)
 
-  // Convert rgba(r,g,b,a) → 0xRRGGBB@alpha so FFmpeg drawtext gets no commas in color values
-  const toFfmpegColor = (color: string): string => {
-    const m = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/)
-    if (!m) return color
-    const r = parseInt(m[1]).toString(16).padStart(2, '0')
-    const g = parseInt(m[2]).toString(16).padStart(2, '0')
-    const b = parseInt(m[3]).toString(16).padStart(2, '0')
-    const alpha = m[4] !== undefined ? parseFloat(m[4]) : 1
-    return `0x${r}${g}${b}@${alpha}`
-  }
-
   // Validate captions: drop bad time ranges, sort by start
   const validCaptions = captions
     .map((c) => ({ ...c, startTime: Number(c.startTime), endTime: Number(c.endTime) }))
     .filter((c) => Number.isFinite(c.startTime) && Number.isFinite(c.endTime) && c.endTime > c.startTime)
     .sort((a, b) => a.startTime - b.startTime)
 
-  // Escape text for drawtext text= option.
-  // CRITICAL: the filtergraph parser does NOT treat \' as an escaped apostrophe — the ' still
-  // opens single-quote mode, silently consuming all remaining options into the text value and
-  // rendering a blank frame. Solution: replace the ASCII apostrophe (U+0027) with the Unicode
-  // right single quotation mark (U+2019), which has no special meaning to the parser.
-  // U+2019 is typographically correct and supported by all major fonts.
-  // % must be doubled (→ %%) because drawtext uses % for text expansion sequences.
-  const escapeText = (t: string): string =>
-    t
-      .replace(/'/g, '\u2019')  // ASCII apostrophe → U+2019 right single quote (avoids parser quote mode)
-      .replace(/\\/g, '\\\\')  // backslash → \\ (must be before other escapes)
-      .replace(/"/g, '\\"')    // double-quote → \"
-      .replace(/:/g, '\\:')    // colon (option delimiter) → \:
-      .replace(/,/g, '\\,')    // comma (filter separator) → \,
-      .replace(/\[/g, '\\[')   // bracket (pad label) → \[
-      .replace(/\]/g, '\\]')   // bracket (pad label) → \]
-      .replace(/%/g, '%%')     // percent → %% (drawtext text expansion)
-
-  // Pre-resolve font paths for all unique family+bold combos (downloads from Google Fonts if needed)
-  const fontPathCache = new Map<string, string>()
-  for (const cap of validCaptions) {
-    const key = `${cap.fontFamily || ''}:${cap.bold}`
-    if (!fontPathCache.has(key)) {
-      const resolved = await resolveFontPath(cap.fontFamily, cap.bold)
-      console.log(`[export] Font "${key}" → ${resolved}`)
-      fontPathCache.set(key, resolved)
-    }
-  }
-
   // Scale font sizes from the preview canvas reference resolution to the actual export resolution.
-  // Preview canvas: 1920px wide for 16:9, 1080px wide for 9:16 (portrait).
-  // This keeps caption sizes visually consistent across export resolutions.
   const referenceWidth = width > height ? 1920 : 1080
   const fontScale = width / referenceWidth
 
-  // Build drawtext filters for captions
-  const drawtextFilters = validCaptions.flatMap((cap) => {
-    const fontsize = Math.max(8, Math.round((cap.fontSize || 32) * fontScale))
-    const fontcolor = toFfmpegColor(cap.color || 'white')
-    const boxcolor = cap.background === 'transparent' ? 'black@0.0' : toFfmpegColor(cap.background || 'black@0.5')
-    const y = `${cap.positionY || 85}*h/100`
-    const fontFile = fontPathCache.get(`${cap.fontFamily || ''}:${cap.bold}`)!
-      .replace(/\\/g, '/')          // FFmpeg needs forward slashes on Windows
-      .replace(/^([A-Za-z]):/, '$1\\:')  // Escape Windows drive letter colon (C: → C\:) — FFmpeg's filter parser breaks on it
-    // Convert stroke color hex → FFmpeg color. borderw= draws the outline outside the text.
-    const strokeW = Math.round((cap.strokeWidth || 0) * fontScale)
-    const strokePart = strokeW > 0
-      ? `:borderw=${strokeW}:bordercolor=${toFfmpegColor(cap.strokeColor || '#000000')}`
-      : ''
-
-    const filters: string[] = []
-
-    if (cap.words && cap.words.length > 0 && cap.lineWidthPx && cap.lineWidthPx > 0 && cap.highlightColor) {
-      // Karaoke mode: render each word as an independent drawtext at its canvas-measured
-      // x position. The highlight overlay for each word uses the IDENTICAL x,y formula as
-      // the normal-color render, so alignment is always pixel-perfect regardless of any
-      // canvas vs FreeType advance-width differences.
-      const lw = cap.lineWidthPx
-      const hlColor = toFfmpegColor(cap.highlightColor)
-
-      // Background box: invisible text just to draw the line's background box.
-      filters.push(
-        `drawtext=fontfile='${fontFile}'` +
-        `:text=${escapeText(cap.text)}` +
-        `:fontsize=${fontsize}:fontcolor=black@0` +
-        `:box=1:boxcolor=${boxcolor}:boxborderw=8` +
-        `:x=(w-${lw})/2:y=${y}` +
-        `:enable=between(t\\,${cap.startTime}\\,${cap.endTime})`
-      )
-
-      for (const w of cap.words) {
-        const wx = `(w-${lw})/2+${w.xOffset}`
-        // Shift each word down so its baseline aligns with the full-line baseline.
-        // FreeType positions text at y = top-of-bounding-box; words with only x-height
-        // glyphs (no ascenders) have a shorter bounding box and sit too high otherwise.
-        const wy = w.yAdjustPx > 0 ? `${y}+${w.yAdjustPx}` : y
-        const wt = escapeText(w.word)
-        // Normal color word — visible throughout the caption's time range
-        filters.push(
-          `drawtext=fontfile='${fontFile}'` +
-          `:text=${wt}:fontsize=${fontsize}:fontcolor=${fontcolor}` +
-          strokePart + `:box=0` +
-          `:x=${wx}:y=${wy}` +
-          `:enable=between(t\\,${cap.startTime}\\,${cap.endTime})`
-        )
-        // Highlight color word — shown only during this word's time window (drawn on top)
-        filters.push(
-          `drawtext=fontfile='${fontFile}'` +
-          `:text=${wt}:fontsize=${fontsize}:fontcolor=${hlColor}` +
-          strokePart + `:box=0` +
-          `:x=${wx}:y=${wy}` +
-          `:enable=between(t\\,${w.startTime}\\,${w.endTime})`
-        )
-      }
-    } else {
-      // Standard mode: single full-line drawtext, no karaoke
-      const xBase = cap.lineWidthPx && cap.lineWidthPx > 0
-        ? `(w-${cap.lineWidthPx})/2`
-        : `(w-text_w)/2`
-      filters.push(
-        `drawtext=fontfile='${fontFile}'` +
-        `:text=${escapeText(cap.text)}` +
-        `:fontsize=${fontsize}:fontcolor=${fontcolor}` +
-        strokePart +
-        `:box=1:boxcolor=${boxcolor}:boxborderw=8` +
-        `:x=${xBase}:y=${y}` +
-        `:enable=between(t\\,${cap.startTime}\\,${cap.endTime})`
-      )
+  // Ensure all needed fonts are downloaded so libass can find them in fontsDir.
+  const seenFontKeys = new Set<string>()
+  for (const cap of validCaptions) {
+    const key = `${cap.fontFamily || ''}:${cap.bold}`
+    if (!seenFontKeys.has(key)) {
+      seenFontKeys.add(key)
+      await resolveFontPath(cap.fontFamily, cap.bold).catch(() => {})
     }
+  }
 
-    return filters
-  })
+  // Write captions as an ASS subtitle file — avoids Windows ENAMETOOLONG by replacing
+  // hundreds of drawtext= filters with a single ass= filter argument.
+  let assFilterStr = ''
+  const assFilePath = path.join(tmpDir, 've_captions.ass')
+  if (validCaptions.length > 0) {
+    fs.writeFileSync(assFilePath, buildASSFile(validCaptions, width, height, fontScale), 'utf8')
+    const fontsDir = getFontsDir()
+    const toFfPath = (p: string): string =>
+      p.replace(/\\/g, '/').replace(/^([A-Za-z]):/, '$1\\:')
+    assFilterStr = `ass='${toFfPath(assFilePath)}':fontsdir='${toFfPath(fontsDir)}'`
+  }
 
   // Build animated pixelation filters from effects.
   // pixelize only accepts integer block sizes (no per-frame expressions), so we approximate
@@ -479,7 +483,7 @@ export async function exportVideo(options: ExportJobOptions): Promise<ExportResu
     ...duotoneFilters,
     ...asciiFilters,
     ...chromaticFilters,
-    ...drawtextFilters,
+    ...(assFilterStr ? [assFilterStr] : []),
   ]
   const vfFilterStr = allVfFilters.length > 0 ? allVfFilters.join(',') : 'null'
   const includeVideoAudio = !muteVideoAudio
@@ -557,6 +561,7 @@ export async function exportVideo(options: ExportJobOptions): Promise<ExportResu
     }
     fs.unlink(segmentListPath, () => {})
     fs.unlink(concatPath, () => {})
+    fs.unlink(assFilePath, () => {})
   }
 
   if (debugLogPath) {

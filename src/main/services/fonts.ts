@@ -3,7 +3,7 @@ import * as https from 'https'
 import * as path from 'path'
 import * as fs from 'fs'
 
-function getFontsDir(): string {
+export function getFontsDir(): string {
   const dir = path.join(app.getPath('userData'), 'fonts')
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
   return dir
