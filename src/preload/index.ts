@@ -35,6 +35,17 @@ const api = {
 
   // Fonts
   downloadFont: (familyName: string) => ipcRenderer.invoke(IPC.FONTS_DOWNLOAD, familyName),
+
+  // AI B-Roll Matcher
+  openFolderDialog: (): Promise<string | null> =>
+    ipcRenderer.invoke(IPC.AI_MATCH_OPEN_FOLDER_DIALOG),
+  matchClips: (apiKey: string, clipsFolder: string, segments: unknown): Promise<unknown[]> =>
+    ipcRenderer.invoke(IPC.AI_MATCH_CLIPS, apiKey, clipsFolder, segments),
+  onAiMatchProgress: (cb: (msg: string) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, msg: string): void => cb(msg)
+    ipcRenderer.on(IPC.AI_MATCH_PROGRESS, listener)
+    return () => ipcRenderer.off(IPC.AI_MATCH_PROGRESS, listener)
+  },
 }
 
 if (process.contextIsolated) {

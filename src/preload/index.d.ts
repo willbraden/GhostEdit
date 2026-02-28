@@ -35,11 +35,14 @@ interface Api {
   openProjectPath: (filePath: string) => Promise<ProjectResult | null>
   getRecentFiles: () => Promise<string[]>
   saveDialog: (defaultName: string) => Promise<string | null>
-  exportVideo: (options: unknown) => Promise<void>
+  exportVideo: (options: unknown) => Promise<{ debugBundlePath?: string } | void>
   onExportProgress: (cb: (percent: number) => void) => () => void
   transcribe: (filePath: string) => Promise<CaptionRaw[]>
   onWhisperProgress: (cb: (msg: string) => void) => () => void
   downloadFont: (familyName: string) => Promise<string>
+  openFolderDialog: () => Promise<string | null>
+  matchClips: (apiKey: string, clipsFolder: string, segments: unknown) => Promise<unknown[]>
+  onAiMatchProgress: (cb: (msg: string) => void) => () => void
 }
 
 declare global {

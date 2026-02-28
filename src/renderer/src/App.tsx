@@ -5,6 +5,7 @@ import { Preview } from './components/Preview'
 import { CaptionEditor } from './components/CaptionEditor'
 import { Timeline } from './components/Timeline'
 import { ExportDialog } from './components/ExportDialog'
+import { AiBRollDialog } from './components/AiBRollDialog'
 import { useProjectStore } from './store/project'
 import type { Project } from './types/project'
 import styles from './App.module.css'
@@ -118,6 +119,7 @@ function useFileOperations() {
 
 function App() {
   const [showExport, setShowExport] = useState(false)
+  const [showAiBRoll, setShowAiBRoll] = useState(false)
   const { undo, redo, setRecentFiles, project } = useProjectStore()
   const fileOps = useFileOperations()
 
@@ -157,6 +159,7 @@ function App() {
     <div className={styles.app}>
       <TopBar
         onExport={() => setShowExport(true)}
+        onAiBRoll={() => setShowAiBRoll(true)}
         onNew={fileOps.handleNew}
         onSave={fileOps.handleSave}
         onSaveAs={fileOps.handleSaveAs}
@@ -178,6 +181,7 @@ function App() {
       </div>
 
       {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
+      {showAiBRoll && <AiBRollDialog onClose={() => setShowAiBRoll(false)} />}
 
       {fileOps.showUnsavedModal && (
         <UnsavedChangesModal

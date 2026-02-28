@@ -62,7 +62,7 @@ export interface Asset {
   thumbnailPath?: string // path to cached thumbnail image
 }
 
-export type EffectType = 'pixelate' | 'duotone'
+export type EffectType = 'pixelate' | 'duotone' | 'ascii' | 'dither' | 'chromatic_aberration'
 
 export interface PixelateParams {
   startBlockSize: number  // 2–64
@@ -74,7 +74,26 @@ export interface DuotoneParams {
   highlightColor: string // '#rrggbb' — mapped to bright tones
 }
 
-export type EffectParams = PixelateParams | DuotoneParams
+export interface AsciiParams {
+  cellSize: number       // 4–20
+  contrast: number       // 0.5–2.0
+}
+
+export interface DitherParams {
+  levels: number         // 2–16
+  amount: number         // 0–1
+}
+
+export interface ChromaticAberrationParams {
+  offsetPx: number       // 0–20
+}
+
+export type EffectParams =
+  | PixelateParams
+  | DuotoneParams
+  | AsciiParams
+  | DitherParams
+  | ChromaticAberrationParams
 
 export interface Effect {
   id: string
@@ -87,6 +106,9 @@ export interface Effect {
 export type ExportEffect =
   | { type: 'pixelate'; timelineStart: number; timelineEnd: number; startBlockSize: number; endBlockSize: number }
   | { type: 'duotone';  timelineStart: number; timelineEnd: number; shadowColor: string; highlightColor: string }
+  | { type: 'ascii'; timelineStart: number; timelineEnd: number; cellSize: number; contrast: number }
+  | { type: 'dither'; timelineStart: number; timelineEnd: number; levels: number; amount: number }
+  | { type: 'chromatic_aberration'; timelineStart: number; timelineEnd: number; offsetPx: number }
 
 export interface Project {
   id: string
@@ -137,4 +159,9 @@ export const IPC = {
 
   // Fonts
   FONTS_DOWNLOAD: 'fonts:download',
+
+  // AI B-Roll Matcher
+  AI_MATCH_CLIPS: 'ai:matchClips',
+  AI_MATCH_OPEN_FOLDER_DIALOG: 'ai:openFolderDialog',
+  AI_MATCH_PROGRESS: 'ai:matchProgress',
 } as const

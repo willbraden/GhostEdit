@@ -10,6 +10,7 @@ function basename(filePath: string): string {
 
 interface Props {
   onExport: () => void
+  onAiBRoll: () => void
   onNew: () => void
   onSave: () => void
   onSaveAs: () => void
@@ -17,7 +18,7 @@ interface Props {
   onOpenRecent: (filePath: string) => void
 }
 
-export function TopBar({ onExport, onNew, onSave, onSaveAs, onOpen, onOpenRecent }: Props) {
+export function TopBar({ onExport, onAiBRoll, onNew, onSave, onSaveAs, onOpen, onOpenRecent }: Props) {
   const {
     project, isDirty, recentFiles,
     setProjectName, setAspectRatio,
@@ -156,6 +157,9 @@ export function TopBar({ onExport, onNew, onSave, onSaveAs, onOpen, onOpenRecent
           </button>
         </div>
 
+        <button className={styles.aiBRollBtn} onClick={onAiBRoll} title="AI B-Roll Matcher">
+          AI B-Roll
+        </button>
         <button className={styles.exportBtn} onClick={onExport}>
           Export
         </button>

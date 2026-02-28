@@ -120,6 +120,20 @@
   color: white;
 }
 
+.aiBRollBtn {
+  background: #7c6af7;
+  color: white;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+
+.aiBRollBtn:hover {
+  background: #8f7fff;
+}
+
 .exportBtn {
   background: #4f8ef7;
   color: white;
