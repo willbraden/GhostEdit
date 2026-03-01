@@ -191,7 +191,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   loadProject: (project, filePath?) =>
     set({
-      project: { effects: [], ...project },
+      project: { ...project, effects: project.effects ?? [] },
       past: [],
       future: [],
       isDirty: false,

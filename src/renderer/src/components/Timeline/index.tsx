@@ -7,45 +7,6 @@ const TRACK_HEIGHT = 56
 const RULER_HEIGHT = 24
 const MIN_ZOOM = 20
 const MAX_ZOOM = 500
-const SNAP_THRESHOLD_PX = 8
-
-// Collect all snap points from the project state, excluding the given item ID
-function collectSnapPoints(excludeId: string): number[] {
-  const { project } = useProjectStore.getState()
-  const points: number[] = [0]
-  for (const track of project.tracks) {
-    for (const clip of track.clips) {
-      if (clip.id !== excludeId) {
-        points.push(clip.timelineStart, clip.timelineEnd)
-      }
-    }
-  }
-  for (const cap of project.captions) {
-    if (cap.id !== excludeId) {
-      points.push(cap.startTime, cap.endTime)
-    }
-  }
-  for (const eff of (project.effects ?? [])) {
-    if (eff.id !== excludeId) {
-      points.push(eff.timelineStart, eff.timelineEnd)
-    }
-  }
-  return points
-}
-
-// Returns the nearest snap point if within thresholdSecs, otherwise null
-function snapToPoints(time: number, points: number[], thresholdSecs: number): number | null {
-  let best: number | null = null
-  let bestDist = Infinity
-  for (const p of points) {
-    const d = Math.abs(p - time)
-    if (d < thresholdSecs && d < bestDist) {
-      best = p
-      bestDist = d
-    }
-  }
-  return best
-}
 
 // Log scale: zoom=20 → slider=0, zoom=100 → slider=50, zoom=500 → slider=100
 function zoomToSlider(z: number): number {
@@ -373,7 +334,6 @@ export function Timeline() {
     selectedCaptionId,
     deoverlapCaptions,
     addEffect,
-    removeEffect,
     updateEffect,
     selectEffect,
     selectedEffectId,
