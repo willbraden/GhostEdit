@@ -100,7 +100,7 @@ interface ProjectStore {
   totalDuration: () => number
 }
 
-function deoverlapArr(captions: Caption[]): Caption[] {
+export function deoverlapArr(captions: Caption[]): Caption[] {
   const sorted = [...captions].sort((a, b) => a.startTime - b.startTime)
   for (let i = 1; i < sorted.length; i++) {
     if (sorted[i].startTime < sorted[i - 1].endTime) {
